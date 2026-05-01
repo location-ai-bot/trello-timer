@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <title>Тайм-трекер · Налаштування iframe URL</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 640px;
+      margin: 40px auto;
+      padding: 24px;
+      color: #172b4d;
+      background: #f4f5f7;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 28px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+    h1 { margin-top: 0; font-size: 22px; }
+    p { line-height: 1.5; color: #5e6c84; }
+    label { display: block; font-weight: 600; margin: 14px 0 6px; font-size: 14px; }
+    input[type="text"] {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 14px;
+      border: 1px solid #dfe1e6;
+      border-radius: 4px;
+      box-sizing: border-box;
+      font-family: monospace;
+    }
+    input[type="text"]:focus { outline: none; border-color: #0079bf; }
+    button {
+      margin-top: 20px;
+      padding: 12px 22px;
+      font-size: 15px;
+      font-weight: 600;
+      background: #0079bf;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover { background: #026aa7; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .step { background: #f4f5f7; padding: 12px 16px; border-radius: 4px; margin: 10px 0; font-size: 13px; }
+    .step a { color: #0079bf; }
+    .result {
+      margin-top: 20px;
+      padding: 14px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-family: monospace;
+      white-space: pre-wrap;
+      word-break: break-all;
+      display: none;
+    }
+    .ok { background: #e3fcef; color: #006644; border: 1px solid #57d9a3; }
+    .err { background: #ffebe6; color: #bf2600; border: 1px solid #ff8f73; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Налаштування Trello Power-Up</h1>
+    <p>Цей інструмент встановлює <code>iframeConnectorUrl</code> для твого Power-Up «Тайм-трекер» через Trello REST API. У новій версії Trello adminки це поле не редагується через UI.</p>
+
+    <div class="step">
+      <b>Крок 1.</b> Відкрий <a href="https://trello.com/app-key" target="_blank">trello.com/app-key</a>. Скопіюй <b>Personal API Key</b> (32 символи) і встав нижче.
+    </div>
+    <div class="step">
+      <b>Крок 2.</b> На тій же сторінці натисни посилання <b>"Token"</b> (або "manually generate a Token") → погодься з доступом → скопіюй <b>Token</b> (довгий рядок) і встав нижче.
+    </div>
+
+    <label>Trello API Key</label>
+    <input id="key" type="text" placeholder="наприклад: 8d3c4f...">
+
+    <label>Trello Token</label>
+    <input id="token" type="text" placeholder="наприклад: ATTA1234567890...">
+
+    <label>Iframe Connector URL</label>
+    <input id="url" type="text" value="https://location-ai-bot.github.io/trello-timer/index.html">
+
+    <label>Power-Up ID</label>
+    <input id="plugin" type="text" value="69f4e0ac9146388d27ac0fd0">
+
+    <button id="go">Встановити iframe URL</button>
+
+    <div id="result" class="result"></div>
+  </div>
+
+  <script>
+    const btn = document.getElementById('go');
+    const resultEl = document.getElementById('result');
+
+    btn.addEventListener('click', async () => {
+      const key = document.getElementById('key').value.trim();
+      const token = document.getElementById('token').value.trim();
+      const url = document.getElementById('url').value.trim();
+      const pluginId = document.getElementById('plugin').value.trim();
+
+      if (!key || !token || !url || !pluginId) {
+        showResult('Заповни всі поля', false);
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Надсилаю...';
+      resultEl.style.display = 'none';
+
+      try {
+        const res = await fetch(
+          `https://api.trello.com/1/plugins/${pluginId}?key=${encodeURIComponent(key)}&token=${encodeURIComponent(token)}`,
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ iframeConnectorUrl: url }),
+          }
+        );
+
+        const text = await res.text();
+        let parsed;
+        try { parsed = JSON.parse(text); } catch (e) { parsed = text; }
+
+        if (res.ok) {
+          showResult(
+            'OK! Iframe URL встановлено. Тепер Power-Up має зʼявитися в каталозі Trello.\n\nВідповідь сервера:\n' +
+              JSON.stringify(parsed, null, 2),
+            true
+          );
+        } else {
+          showResult(
+            `Помилка ${res.status}: ${res.statusText}\n\n` + JSON.stringify(parsed, null, 2),
+            false
+          );
+        }
+      } catch (e) {
+        showResult('Запит впав: ' + e.message, false);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Встановити iframe URL';
+      }
+    });
+
+    function showResult(msg, ok) {
+      resultEl.textContent = msg;
+      resultEl.className = 'result ' + (ok ? 'ok' : 'err');
+      resultEl.style.display = 'block';
+    }
+  </script>
+</body>
+</html>
