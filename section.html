@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="https://p.trellocdn.com/power-up.min.css">
+  <link rel="stylesheet" href="./styles.css">
+  <script src="https://p.trellocdn.com/power-up.min.js"></script>
+</head>
+<body>
+  <div id="root">
+    <div class="row">
+      <button id="toggle" class="btn btn-primary">▶ Старт</button>
+      <span id="elapsed" class="elapsed"></span>
+    </div>
+    <div id="total" class="total">Загальний час: 0:00:00</div>
+    <details class="sessions-block">
+      <summary>Останні сесії</summary>
+      <ul id="sessions"></ul>
+    </details>
+  </div>
+  <script src="./section.js"></script>
+</body>
+</html>
