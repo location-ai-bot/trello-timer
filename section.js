@@ -12,7 +12,6 @@ var t = window.TrelloPowerUp.iframe();
 var tickInterval = null;
 var refreshInterval = null;
 var currentCardId = null;
-var currentCardDue = null;
 var currentStatus = null;
 var currentMemberId = null;
 var isAdmin = false;
@@ -106,16 +105,6 @@ function formatSecToMMSS(sec) {
   return m + ':' + String(s).padStart(2, '0');
 }
 
-function formatDueShort(iso) {
-  if (!iso) return '';
-  try {
-    var d = new Date(iso);
-    return d.toLocaleString('uk-UA', {
-      day: '2-digit', month: '2-digit', year: '2-digit',
-      hour: '2-digit', minute: '2-digit'
-    });
-  } catch (e) { return iso; }
-}
 
 // ────────── Supabase
 
@@ -186,29 +175,6 @@ function saveProjectMeta(adminId, cardId, fields) {
   });
 }
 
-function syncCardDue(adminId, cardId, dueIso) {
-  return fetch(SUPABASE_URL + '/rest/v1/rpc/sync_card_due', {
-    method: 'POST', headers: sbHeaders(),
-    body: JSON.stringify({
-      p_admin_trello_member_id: adminId,
-      p_trello_card_id: cardId,
-      p_due_iso: dueIso || ''
-    })
-  });
-}
-
-function incrementRevisions(adminId, cardId) {
-  return fetch(SUPABASE_URL + '/rest/v1/rpc/increment_revisions', {
-    method: 'POST', headers: sbHeaders(),
-    body: JSON.stringify({
-      p_admin_trello_member_id: adminId,
-      p_trello_card_id: cardId
-    })
-  }).then(function (r) {
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json(); // повертає новий лічильник
-  });
-}
 
 function fetchClientsList() {
   return fetch(SUPABASE_URL + '/rest/v1/rpc/list_clients_for_powerup', {
@@ -587,7 +553,7 @@ function showAdminBlock(meta, monteurs, currentAssigned, clients) {
     monteurSel.appendChild(opt);
   });
 
-  // ─── Нові поля Етап 2: тривалість, складність, дедлайн, правки ───
+  // ─── Тривалість фінального відео (для CR-метрики у дашборді) ───
   var finalDurEl = document.getElementById('admin-final-duration');
   var finalDurHint = document.getElementById('admin-final-duration-hint');
   if (meta && meta.final_duration_sec != null) {
@@ -597,27 +563,6 @@ function showAdminBlock(meta, monteurs, currentAssigned, clients) {
     finalDurEl.value = '';
     finalDurHint.textContent = 'не вказано';
   }
-
-  // Complexity buttons
-  var complexity = meta && meta.complexity ? Number(meta.complexity) : null;
-  document.querySelectorAll('.complexity-btn').forEach(function (b) {
-    b.classList.toggle('active', complexity != null && Number(b.dataset.val) === complexity);
-  });
-
-  // Due date — readonly, показуємо в людському форматі
-  var dueEl = document.getElementById('admin-due');
-  var dueHint = document.getElementById('admin-due-hint');
-  if (meta && meta.due_at) {
-    dueEl.value = formatDueShort(meta.due_at);
-    dueHint.textContent = '';
-  } else {
-    dueEl.value = '';
-    dueHint.textContent = 'постав в Trello (Due date)';
-  }
-
-  // Revisions counter
-  var revEl = document.getElementById('admin-revisions-count');
-  revEl.textContent = (meta && meta.revisions_count != null) ? meta.revisions_count : '0';
 
   updateAssignLock();
   try { t.sizeTo('#root'); } catch (e) {}
@@ -799,35 +744,6 @@ function bindAdminInputs() {
   });
   finalDurEl.addEventListener('blur', handleFinalDur);
 
-  // ─── Складність 1..5 ───
-  document.querySelectorAll('.complexity-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var current = btn.classList.contains('active');
-      // Toggle: повторний клік знімає
-      document.querySelectorAll('.complexity-btn').forEach(function (b) {
-        b.classList.remove('active');
-      });
-      if (!current) btn.classList.add('active');
-      var val = current ? null : Number(btn.dataset.val);
-      flushMeta({ complexity: val });
-    });
-  });
-
-  // ─── Правки ───
-  var revIncBtn = document.getElementById('admin-revisions-inc');
-  var revEl = document.getElementById('admin-revisions-count');
-  revIncBtn.addEventListener('click', function () {
-    revIncBtn.disabled = true;
-    showStatus('Зараховую правку…');
-    incrementRevisions(currentMemberId, currentCardId)
-      .then(function (newCount) {
-        revEl.textContent = newCount;
-        showStatus('Правка #' + newCount + ' зарахована ✓');
-      })
-      .catch(function (err) { showStatus('Помилка: ' + (err.message || err), 'error'); })
-      .then(function () { revIncBtn.disabled = false; });
-  });
-
   // ─── Typeahead клієнта ───
   // input — користувач набирає текст. Після кожного символу:
   //   • перерахувати статус (matched / unmatched)
@@ -857,37 +773,30 @@ function bindAdminInputs() {
 
 t.render(function () {
   Promise.all([
-    t.card('id', 'due'),
+    t.card('id'),
     t.member('id')
   ]).then(function (results) {
     currentCardId = results[0].id;
-    currentCardDue = results[0].due || null; // ISO string або null
     currentMemberId = results[1].id;
 
     refresh();
     if (refreshInterval) clearInterval(refreshInterval);
     refreshInterval = setInterval(refresh, REFRESH_INTERVAL_MS);
 
-    // Перевірка прав адміна — раз на завантаження
     return fetchIsAdmin(currentMemberId);
   }).then(function (admin) {
     if (admin === true) {
       isAdmin = true;
       bindAdminInputs();
-      // Спочатку синхронізуємо due з Trello → потім тягнемо meta з оновленим due
-      return syncCardDue(currentMemberId, currentCardId, currentCardDue)
-        .catch(function () { /* fire-and-forget — не блокує UI якщо впало */ })
-        .then(function () {
-          return Promise.all([
-            fetchProjectMeta(currentMemberId, currentCardId),
-            fetchMonteursList(currentMemberId),
-            fetchAssignedMonteur(currentCardId),
-            fetchClientsList()
-          ]);
-        }).then(function (results) {
-          showAdminBlock(results[0], results[1], results[2], results[3]);
-          refresh();
-        });
+      return Promise.all([
+        fetchProjectMeta(currentMemberId, currentCardId),
+        fetchMonteursList(currentMemberId),
+        fetchAssignedMonteur(currentCardId),
+        fetchClientsList()
+      ]).then(function (results) {
+        showAdminBlock(results[0], results[1], results[2], results[3]);
+        refresh();
+      });
     }
   });
 });
