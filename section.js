@@ -34,6 +34,30 @@ function formatHM(sec) {
   return h + 'г ' + String(m).padStart(2, '0') + 'хв';
 }
 
+// "47:23" формат для тривалості/курсора в межах sequence (mm:ss). Для довших — h:mm:ss.
+function formatTimecode(sec) {
+  if (sec == null) return '—';
+  sec = Number(sec) || 0;
+  if (sec < 0) sec = 0;
+  var h = Math.floor(sec / 3600);
+  var m = Math.floor((sec % 3600) / 60);
+  var s = Math.floor(sec % 60);
+  if (h > 0) {
+    return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+function relativeTime(iso) {
+  if (!iso) return '—';
+  var d = new Date(iso);
+  var diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (diffSec < 60)   return diffSec + ' сек тому';
+  if (diffSec < 3600) return Math.floor(diffSec / 60) + ' хв тому';
+  if (diffSec < 86400) return Math.floor(diffSec / 3600) + ' г тому';
+  return formatDate(iso);
+}
+
 function formatDate(iso) {
   if (!iso) return '';
   try {
@@ -266,7 +290,68 @@ function renderStatus(s) {
   }
 
   total.textContent = 'Загальний час по картці: ' + formatHM(s.total_card_sec || 0);
+  renderEditInfo(s);
   try { t.sizeTo('#root'); } catch (e) {}
+}
+
+// Рендеримо admin-only блок "🎬 Інформація про монтаж" — стан з останнього snapshot.
+// Видимий тільки коли користувач вже визначений як admin (isAdmin = true).
+function renderEditInfo(s) {
+  var block = document.getElementById('edit-info');
+  if (!block) return;
+  if (!isAdmin) { block.hidden = true; return; }
+  block.hidden = false;
+
+  var playhead = (s && s.last_playhead_sec != null) ? Number(s.last_playhead_sec) : null;
+  var duration = (s && s.last_sequence_duration_sec != null) ? Number(s.last_sequence_duration_sec) : null;
+  var clips    = (s && s.last_clips_count != null) ? s.last_clips_count : null;
+  var cuts     = (s && s.last_cuts_count != null) ? s.last_cuts_count : null;
+  var vTracks  = (s && s.last_video_tracks != null) ? s.last_video_tracks : null;
+  var aTracks  = (s && s.last_audio_tracks != null) ? s.last_audio_tracks : null;
+  var seqName  = (s && s.last_sequence_name) || null;
+  var match    = (s && s.last_project_match);
+  var freshAt  = (s && s.last_snapshot_at) || null;
+
+  function set(id, val) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = (val == null || val === '') ? '—' : val;
+  }
+
+  set('ei-playhead', playhead != null ? formatTimecode(playhead) : '—');
+  set('ei-duration', duration != null && duration > 0 ? formatTimecode(duration) : '—');
+
+  // Прогрес
+  var progressEl = document.getElementById('ei-progress');
+  if (progressEl) {
+    if (playhead != null && duration != null && duration > 0) {
+      var pct = Math.min(100, Math.max(0, (playhead / duration) * 100));
+      progressEl.textContent = pct.toFixed(1) + '%';
+    } else {
+      progressEl.textContent = '—';
+    }
+  }
+
+  set('ei-clips', clips);
+  set('ei-cuts', cuts);
+  set('ei-vtracks', vTracks);
+  set('ei-atracks', aTracks);
+  set('ei-seq', seqName);
+  set('ei-fresh', freshAt ? relativeTime(freshAt) : '—');
+
+  // Match-статус кольоровий
+  var matchEl = document.getElementById('ei-match');
+  if (matchEl) {
+    matchEl.classList.remove('match-yes', 'match-no');
+    if (match === true) {
+      matchEl.textContent = '✓ так';
+      matchEl.classList.add('match-yes');
+    } else if (match === false) {
+      matchEl.textContent = '✗ ні (інший проєкт)';
+      matchEl.classList.add('match-no');
+    } else {
+      matchEl.textContent = '—';
+    }
+  }
 }
 
 function startTick(startedAtIso) {

@@ -192,6 +192,67 @@
       font-family: inherit;
     }
 
+    .edit-info {
+      padding: 8px 12px;
+      border: 1px solid #dfe1e6;
+      border-radius: 6px;
+      background: #fafbfc;
+    }
+    .edit-info[hidden] { display: none; }
+    .edit-info > summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      color: #172b4d;
+      padding: 2px 0;
+      list-style: none;
+      user-select: none;
+    }
+    .edit-info > summary::-webkit-details-marker { display: none; }
+    .edit-info > summary::before {
+      content: '▸';
+      display: inline-block;
+      margin-right: 6px;
+      transition: transform 0.15s;
+      color: #5e6c84;
+    }
+    .edit-info[open] > summary::before { transform: rotate(90deg); }
+
+    .edit-info-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 8px;
+      font-size: 12px;
+    }
+    .edit-info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      padding: 4px 0;
+      border-bottom: 1px dashed #ebecf0;
+    }
+    .edit-info-row:last-child { border-bottom: none; }
+    .edit-info-row > span {
+      color: #5e6c84;
+      font-size: 12px;
+    }
+    .edit-info-row > b {
+      color: #172b4d;
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+    }
+    .edit-info-row > b.match-yes { color: #166a3d; }
+    .edit-info-row > b.match-no  { color: #b04632; }
+    .edit-info-hint {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #97a0af;
+      font-style: italic;
+      line-height: 1.4;
+    }
+
     .admin-client-status {
       font-size: 11px;
       padding-left: 118px; /* щоб збігалось зі стартом input'а під label'ом */
@@ -221,6 +282,26 @@
     </div>
 
     <div class="total" id="total">Загальний час по картці: —</div>
+
+    <!-- Admin-only: розгортальний блок з технічною інфою з останнього snapshot Premiere -->
+    <details id="edit-info" class="edit-info" hidden>
+      <summary>🎬 Інформація про монтаж</summary>
+      <div class="edit-info-grid">
+        <div class="edit-info-row"><span>Курсор на таймлайні</span><b id="ei-playhead">—</b></div>
+        <div class="edit-info-row"><span>Тривалість sequence</span><b id="ei-duration">—</b></div>
+        <div class="edit-info-row"><span>Прогрес (курсор / тривалість)</span><b id="ei-progress">—</b></div>
+        <div class="edit-info-row"><span>Кліпів на таймлайні</span><b id="ei-clips">—</b></div>
+        <div class="edit-info-row"><span>Розрізів</span><b id="ei-cuts">—</b></div>
+        <div class="edit-info-row"><span>Відео треків</span><b id="ei-vtracks">—</b></div>
+        <div class="edit-info-row"><span>Аудіо треків</span><b id="ei-atracks">—</b></div>
+        <div class="edit-info-row"><span>Sequence в Premiere</span><b id="ei-seq">—</b></div>
+        <div class="edit-info-row"><span>На правильному проєкті</span><b id="ei-match">—</b></div>
+        <div class="edit-info-row"><span>Дані оновлено</span><b id="ei-fresh">—</b></div>
+      </div>
+      <div class="edit-info-hint">
+        Дані беруться з останнього snapshot Premiere (раз на 30 сек) активної або останньої сесії на картці. Допомагає зрозуміти прогрес монтажу, навіть коли не з ким говорити.
+      </div>
+    </details>
 
     <div id="admin-block" class="admin-block">
       <div class="admin-block-title">🔒 Admin · призначення, тип, клієнт</div>
