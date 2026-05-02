@@ -98,8 +98,11 @@ function fetchProjectMeta(adminId, cardId) {
     })
   })
     .then(function (r) { return r.ok ? r.json() : []; })
-    .then(function (rows) { return (rows && rows.length) ? rows[0] : { cost: null, montage_type: null }; })
-    .catch(function () { return { cost: null, montage_type: null }; });
+    .then(function (rows) {
+      return (rows && rows.length) ? rows[0]
+        : { cost: null, montage_type: null, client_id: null, client_name: null };
+    })
+    .catch(function () { return { cost: null, montage_type: null, client_id: null, client_name: null }; });
 }
 
 function saveProjectMeta(adminId, cardId, cost, type) {
@@ -112,6 +115,39 @@ function saveProjectMeta(adminId, cardId, cost, type) {
       p_cost: cost,
       p_montage_type: type
     })
+  });
+}
+
+function fetchClientsList() {
+  return fetch(SUPABASE_URL + '/rest/v1/rpc/list_clients_for_powerup', {
+    method: 'POST', headers: sbHeaders(), body: JSON.stringify({})
+  })
+    .then(function (r) { return r.ok ? r.json() : []; })
+    .catch(function () { return []; });
+}
+
+function assignClientToCard(adminId, cardId, clientId) {
+  return fetch(SUPABASE_URL + '/rest/v1/rpc/assign_client_to_card', {
+    method: 'POST', headers: sbHeaders(),
+    body: JSON.stringify({
+      p_admin_trello_member_id: adminId,
+      p_trello_card_id: cardId,
+      p_client_id: clientId
+    })
+  });
+}
+
+function createNewClient(adminId, name) {
+  return fetch(SUPABASE_URL + '/rest/v1/rpc/create_client', {
+    method: 'POST', headers: sbHeaders(),
+    body: JSON.stringify({
+      p_admin_trello_member_id: adminId,
+      p_name: name,
+      p_color: '#4cc2ff'
+    })
+  }).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json(); // повертає uuid нового клієнта
   });
 }
 
@@ -292,7 +328,24 @@ function refresh() {
 
 // ────────── Admin-блок: показ і логіка
 
-function showAdminBlock(meta, monteurs, currentAssigned) {
+// Заповнює client dropdown списком, виділяє поточний клієнт картки.
+function populateClientsDropdown(clients, currentClientId) {
+  var clientSel = document.getElementById('admin-client');
+  while (clientSel.firstChild) clientSel.removeChild(clientSel.firstChild);
+  var empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = '— обери —';
+  clientSel.appendChild(empty);
+  (clients || []).forEach(function (c) {
+    var opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = c.name;
+    if (currentClientId && currentClientId === c.id) opt.selected = true;
+    clientSel.appendChild(opt);
+  });
+}
+
+function showAdminBlock(meta, monteurs, currentAssigned, clients) {
   var block = document.getElementById('admin-block');
   var costEl = document.getElementById('admin-cost');
   var typeEl = document.getElementById('admin-type');
@@ -301,6 +354,8 @@ function showAdminBlock(meta, monteurs, currentAssigned) {
   block.classList.add('visible');
   if (meta && meta.cost != null) costEl.value = meta.cost;
   if (meta && meta.montage_type) typeEl.value = meta.montage_type;
+
+  populateClientsDropdown(clients, meta && meta.client_id);
 
   // Заповнюємо dropdown монтажерів
   while (monteurSel.firstChild) monteurSel.removeChild(monteurSel.firstChild);
@@ -317,44 +372,91 @@ function showAdminBlock(meta, monteurs, currentAssigned) {
     monteurSel.appendChild(opt);
   });
 
+  // Початковий стан блокування monteur
+  updateAssignLock();
+
+  try { t.sizeTo('#root'); } catch (e) {}
+}
+
+// Блокує/розблоковує monteur dropdown залежно від наявності типу і клієнта.
+// Якщо в monteur dropdown уже стояв вибір (картка вже мала монтажера) — лишаємо
+// можливість зняти, але нову людину не дамо обрати без типу/клієнта.
+function updateAssignLock() {
+  var typeEl = document.getElementById('admin-type');
+  var clientSel = document.getElementById('admin-client');
+  var monteurSel = document.getElementById('admin-monteur');
+  var warning = document.getElementById('admin-warning');
+
+  var hasType = !!typeEl.value;
+  var hasClient = !!clientSel.value;
+  var ok = hasType && hasClient;
+
+  monteurSel.disabled = !ok;
+  warning.hidden = ok;
   try { t.sizeTo('#root'); } catch (e) {}
 }
 
 function bindAdminInputs() {
   var costEl = document.getElementById('admin-cost');
   var typeEl = document.getElementById('admin-type');
+  var clientSel = document.getElementById('admin-client');
   var monteurSel = document.getElementById('admin-monteur');
   var savingEl = document.getElementById('admin-saving');
+  var addClientBtn = document.getElementById('admin-add-client');
+  var newClientForm = document.getElementById('admin-new-client');
+  var newClientNameEl = document.getElementById('admin-new-client-name');
+  var newClientSaveBtn = document.getElementById('admin-new-client-save');
+  var newClientCancelBtn = document.getElementById('admin-new-client-cancel');
+
+  function showStatus(msg, kind) {
+    savingEl.textContent = msg;
+    if (kind === 'error') savingEl.style.color = '#eb5a46';
+    else savingEl.style.color = '';
+    if (msg && msg.indexOf('…') === -1) {
+      setTimeout(function () { savingEl.textContent = ''; }, 2000);
+    }
+  }
 
   function flushMeta() {
     var cost = costEl.value === '' ? null : Number(costEl.value);
     var type = typeEl.value || null;
-    savingEl.textContent = 'Зберігаю…';
+    showStatus('Зберігаю…');
     saveProjectMeta(currentMemberId, currentCardId, cost, type)
       .then(function (r) {
-        savingEl.textContent = r.ok ? 'Збережено ✓' : ('Помилка: HTTP ' + r.status);
-        setTimeout(function () { savingEl.textContent = ''; }, 2000);
+        showStatus(r.ok ? 'Збережено ✓' : ('Помилка: HTTP ' + r.status), r.ok ? null : 'error');
       })
-      .catch(function (err) {
-        savingEl.textContent = 'Помилка: ' + (err.message || err);
-      });
+      .catch(function (err) { showStatus('Помилка: ' + (err.message || err), 'error'); });
+  }
+
+  function flushClient() {
+    var clientId = clientSel.value || null;
+    if (!clientId) {
+      // Якщо знято — скидаємо в БД (передаємо null допустимо? Так, p_client_id uuid може бути null)
+      showStatus('Знімаю клієнта…');
+    } else {
+      showStatus('Зберігаю клієнта…');
+    }
+    assignClientToCard(currentMemberId, currentCardId, clientId)
+      .then(function (r) {
+        showStatus(r.ok ? 'Збережено ✓' : ('Помилка: HTTP ' + r.status), r.ok ? null : 'error');
+      })
+      .catch(function (err) { showStatus('Помилка: ' + (err.message || err), 'error'); });
+    updateAssignLock();
   }
 
   function flushAssignment() {
     var monteurId = monteurSel.value || null;
-    savingEl.textContent = 'Призначаю…';
-    // Беремо назву картки з Trello SDK
+    showStatus('Призначаю…');
     t.card('name').then(function (card) {
       return assignMonteurToCard(currentMemberId, currentCardId, card.name, monteurId);
     }).then(function (r) {
       if (r.ok) {
-        savingEl.textContent = monteurId ? 'Призначено ✓' : 'Знято ✓';
+        showStatus(monteurId ? 'Призначено ✓' : 'Знято ✓');
       } else {
-        savingEl.textContent = 'Помилка: HTTP ' + r.status;
+        showStatus('Помилка: HTTP ' + r.status, 'error');
       }
-      setTimeout(function () { savingEl.textContent = ''; }, 2000);
     }).catch(function (err) {
-      savingEl.textContent = 'Помилка: ' + (err.message || err);
+      showStatus('Помилка: ' + (err.message || err), 'error');
     });
   }
 
@@ -363,9 +465,45 @@ function bindAdminInputs() {
     savingDebounce = setTimeout(flushMeta, 700);
   }
 
+  // Додавання нового клієнта inline
+  addClientBtn.addEventListener('click', function () {
+    newClientForm.hidden = false;
+    newClientNameEl.value = '';
+    newClientNameEl.focus();
+    try { t.sizeTo('#root'); } catch (e) {}
+  });
+  newClientCancelBtn.addEventListener('click', function () {
+    newClientForm.hidden = true;
+    try { t.sizeTo('#root'); } catch (e) {}
+  });
+  newClientNameEl.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') newClientSaveBtn.click();
+    else if (e.key === 'Escape') newClientCancelBtn.click();
+  });
+  newClientSaveBtn.addEventListener('click', function () {
+    var name = (newClientNameEl.value || '').trim();
+    if (!name) { newClientNameEl.focus(); return; }
+    showStatus('Створюю клієнта…');
+    createNewClient(currentMemberId, name).then(function (newId) {
+      // Перевантажимо список і виставимо новий як обраний
+      return fetchClientsList().then(function (clients) {
+        populateClientsDropdown(clients, newId);
+        newClientForm.hidden = true;
+        // Зберігаємо асоціацію картки з новим клієнтом
+        return assignClientToCard(currentMemberId, currentCardId, newId);
+      });
+    }).then(function (r) {
+      showStatus(r && r.ok ? 'Клієнт створений і прикріплений ✓' : ('Помилка: HTTP ' + (r && r.status)), r && r.ok ? null : 'error');
+      updateAssignLock();
+    }).catch(function (err) {
+      showStatus('Помилка: ' + (err.message || err), 'error');
+    });
+  });
+
   costEl.addEventListener('input', debouncedFlushMeta);
   costEl.addEventListener('blur', flushMeta);
-  typeEl.addEventListener('change', flushMeta);
+  typeEl.addEventListener('change', function () { flushMeta(); updateAssignLock(); });
+  clientSel.addEventListener('change', flushClient);
   monteurSel.addEventListener('change', flushAssignment);
 }
 
@@ -390,9 +528,10 @@ t.render(function () {
       return Promise.all([
         fetchProjectMeta(currentMemberId, currentCardId),
         fetchMonteursList(currentMemberId),
-        fetchAssignedMonteur(currentCardId)
+        fetchAssignedMonteur(currentCardId),
+        fetchClientsList()
       ]).then(function (results) {
-        showAdminBlock(results[0], results[1], results[2]);
+        showAdminBlock(results[0], results[1], results[2], results[3]);
       });
     }
   });

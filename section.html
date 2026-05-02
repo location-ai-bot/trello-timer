@@ -132,6 +132,65 @@
       font-style: italic;
       min-height: 14px;
     }
+
+    .admin-warning {
+      padding: 8px 10px;
+      background: #fff4e0;
+      border: 1px solid #ffb84d;
+      border-radius: 4px;
+      font-size: 11px;
+      color: #5e3b00;
+      line-height: 1.4;
+    }
+    .admin-warning b { color: #172b4d; }
+
+    .admin-row select:disabled,
+    .admin-row input:disabled {
+      background: #f4f5f7;
+      color: #97a0af;
+      cursor: not-allowed;
+      border-color: #ebecf0;
+    }
+
+    .admin-mini-btn {
+      padding: 5px 10px;
+      font-size: 12px;
+      border: 1px solid #c1c7d0;
+      border-radius: 4px;
+      background: #fff;
+      color: #172b4d;
+      cursor: pointer;
+      font-family: inherit;
+      flex-shrink: 0;
+    }
+    .admin-mini-btn:hover { background: #ebecf0; }
+    .admin-mini-btn.primary {
+      background: #0079bf;
+      color: #fff;
+      border-color: #0079bf;
+    }
+    .admin-mini-btn.primary:hover { background: #026aa7; }
+
+    .admin-new-client {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      padding: 8px;
+      background: #e6f1fa;
+      border: 1px solid #79b5e0;
+      border-radius: 4px;
+    }
+    .admin-new-client[hidden] { display: none; }
+    .admin-new-client input {
+      flex: 1;
+      padding: 6px 8px;
+      font-size: 13px;
+      border: 1px solid #c1c7d0;
+      border-radius: 4px;
+      background: #fff;
+      color: #172b4d;
+      font-family: inherit;
+    }
   </style>
 </head>
 <body>
@@ -144,27 +203,52 @@
     <div class="total" id="total">Загальний час по картці: —</div>
 
     <div id="admin-block" class="admin-block">
-      <div class="admin-block-title">🔒 Admin · призначення, вартість і тип</div>
+      <div class="admin-block-title">🔒 Admin · призначення, тип, клієнт</div>
+
+      <div id="admin-warning" class="admin-warning" hidden>
+        ⚠️ Спочатку обери <b>тип монтажу</b> та <b>клієнта</b> — без цього монтажера призначити не можна.
+      </div>
+
+      <div class="admin-row">
+        <label for="admin-type">Тип монтажу</label>
+        <select id="admin-type">
+          <option value="">— обери —</option>
+          <option value="interview">Інтерв'ю / подкаст</option>
+          <option value="solo">Соло (одна людина в кадрі)</option>
+          <option value="dynamic">Динамічний монтаж</option>
+          <option value="motion">Моушн / графіка</option>
+          <option value="commercial">Реклама</option>
+          <option value="documentary">Документальний</option>
+        </select>
+      </div>
+
+      <div class="admin-row">
+        <label for="admin-client">Клієнт</label>
+        <select id="admin-client">
+          <option value="">— обери —</option>
+        </select>
+        <button id="admin-add-client" class="admin-mini-btn" title="Додати нового клієнта">+</button>
+      </div>
+
+      <!-- Інлайн-форма додавання нового клієнта (схована за замовчуванням) -->
+      <div id="admin-new-client" class="admin-new-client" hidden>
+        <input id="admin-new-client-name" type="text" placeholder="Назва клієнта (напр. Бородатюк)" maxlength="60">
+        <button id="admin-new-client-save" class="admin-mini-btn primary">Зберегти</button>
+        <button id="admin-new-client-cancel" class="admin-mini-btn">×</button>
+      </div>
+
       <div class="admin-row">
         <label for="admin-monteur">Монтажер</label>
-        <select id="admin-monteur">
+        <select id="admin-monteur" disabled>
           <option value="">— не призначено —</option>
         </select>
       </div>
+
       <div class="admin-row">
         <label for="admin-cost">Вартість (грн)</label>
         <input id="admin-cost" type="number" min="0" step="0.01" placeholder="—">
       </div>
-      <div class="admin-row">
-        <label for="admin-type">Тип монтажу</label>
-        <select id="admin-type">
-          <option value="">—</option>
-          <option value="podcast">Подкаст / інтерв'ю</option>
-          <option value="reels">Рілс</option>
-          <option value="documentary">Документальний</option>
-          <option value="motion">Моушн графіка</option>
-        </select>
-      </div>
+
       <div id="admin-saving" class="admin-saving"></div>
     </div>
 
