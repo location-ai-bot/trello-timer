@@ -115,6 +115,41 @@ function saveProjectMeta(adminId, cardId, cost, type) {
   });
 }
 
+function fetchMonteursList(adminId) {
+  return fetch(SUPABASE_URL + '/rest/v1/rpc/list_monteurs_for_admin', {
+    method: 'POST',
+    headers: sbHeaders(),
+    body: JSON.stringify({ p_admin_trello_member_id: adminId })
+  })
+    .then(function (r) { return r.ok ? r.json() : []; })
+    .catch(function () { return []; });
+}
+
+function fetchAssignedMonteur(cardId) {
+  return fetch(SUPABASE_URL + '/rest/v1/rpc/get_assigned_monteur', {
+    method: 'POST',
+    headers: sbHeaders(),
+    body: JSON.stringify({ p_trello_card_id: cardId })
+  })
+    .then(function (r) { return r.ok ? r.json() : []; })
+    .then(function (rows) { return (rows && rows.length) ? rows[0] : { monteur_id: null }; })
+    .catch(function () { return { monteur_id: null }; });
+}
+
+// При зміні монтажера у dropdown — викликаємо assign_monteur_to_card з назвою картки
+function assignMonteurToCard(adminId, cardId, cardName, monteurId) {
+  return fetch(SUPABASE_URL + '/rest/v1/rpc/assign_monteur_to_card', {
+    method: 'POST',
+    headers: sbHeaders(),
+    body: JSON.stringify({
+      p_admin_trello_member_id: adminId,
+      p_trello_card_id: cardId,
+      p_trello_card_name: cardName,
+      p_monteur_id: monteurId || null
+    })
+  });
+}
+
 // Список останніх сесій: треба знайти project_id за trello_card_id, потім
 // взяти 10 останніх завершених. Робимо двома запитами через REST.
 function fetchRecentSessions(cardId) {
@@ -257,22 +292,41 @@ function refresh() {
 
 // ────────── Admin-блок: показ і логіка
 
-function showAdminBlock(meta) {
+function showAdminBlock(meta, monteurs, currentAssigned) {
   var block = document.getElementById('admin-block');
   var costEl = document.getElementById('admin-cost');
   var typeEl = document.getElementById('admin-type');
+  var monteurSel = document.getElementById('admin-monteur');
+
   block.classList.add('visible');
   if (meta && meta.cost != null) costEl.value = meta.cost;
   if (meta && meta.montage_type) typeEl.value = meta.montage_type;
+
+  // Заповнюємо dropdown монтажерів
+  while (monteurSel.firstChild) monteurSel.removeChild(monteurSel.firstChild);
+  var emptyOpt = document.createElement('option');
+  emptyOpt.value = '';
+  emptyOpt.textContent = '— не призначено —';
+  monteurSel.appendChild(emptyOpt);
+
+  (monteurs || []).forEach(function (m) {
+    var opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = m.full_name + ' (@' + m.nickname + ')';
+    if (currentAssigned && currentAssigned.monteur_id === m.id) opt.selected = true;
+    monteurSel.appendChild(opt);
+  });
+
   try { t.sizeTo('#root'); } catch (e) {}
 }
 
 function bindAdminInputs() {
   var costEl = document.getElementById('admin-cost');
   var typeEl = document.getElementById('admin-type');
+  var monteurSel = document.getElementById('admin-monteur');
   var savingEl = document.getElementById('admin-saving');
 
-  function flush() {
+  function flushMeta() {
     var cost = costEl.value === '' ? null : Number(costEl.value);
     var type = typeEl.value || null;
     savingEl.textContent = 'Зберігаю…';
@@ -286,14 +340,33 @@ function bindAdminInputs() {
       });
   }
 
-  function debouncedFlush() {
-    if (savingDebounce) clearTimeout(savingDebounce);
-    savingDebounce = setTimeout(flush, 700);
+  function flushAssignment() {
+    var monteurId = monteurSel.value || null;
+    savingEl.textContent = 'Призначаю…';
+    // Беремо назву картки з Trello SDK
+    t.card('name').then(function (card) {
+      return assignMonteurToCard(currentMemberId, currentCardId, card.name, monteurId);
+    }).then(function (r) {
+      if (r.ok) {
+        savingEl.textContent = monteurId ? 'Призначено ✓' : 'Знято ✓';
+      } else {
+        savingEl.textContent = 'Помилка: HTTP ' + r.status;
+      }
+      setTimeout(function () { savingEl.textContent = ''; }, 2000);
+    }).catch(function (err) {
+      savingEl.textContent = 'Помилка: ' + (err.message || err);
+    });
   }
 
-  costEl.addEventListener('input', debouncedFlush);
-  costEl.addEventListener('blur', flush);
-  typeEl.addEventListener('change', flush);
+  function debouncedFlushMeta() {
+    if (savingDebounce) clearTimeout(savingDebounce);
+    savingDebounce = setTimeout(flushMeta, 700);
+  }
+
+  costEl.addEventListener('input', debouncedFlushMeta);
+  costEl.addEventListener('blur', flushMeta);
+  typeEl.addEventListener('change', flushMeta);
+  monteurSel.addEventListener('change', flushAssignment);
 }
 
 t.render(function () {
@@ -314,7 +387,13 @@ t.render(function () {
     if (admin === true) {
       isAdmin = true;
       bindAdminInputs();
-      return fetchProjectMeta(currentMemberId, currentCardId).then(showAdminBlock);
+      return Promise.all([
+        fetchProjectMeta(currentMemberId, currentCardId),
+        fetchMonteursList(currentMemberId),
+        fetchAssignedMonteur(currentCardId)
+      ]).then(function (results) {
+        showAdminBlock(results[0], results[1], results[2]);
+      });
     }
   });
 });

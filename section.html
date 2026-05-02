@@ -144,7 +144,13 @@
     <div class="total" id="total">Загальний час по картці: —</div>
 
     <div id="admin-block" class="admin-block">
-      <div class="admin-block-title">🔒 Admin · вартість і тип монтажу</div>
+      <div class="admin-block-title">🔒 Admin · призначення, вартість і тип</div>
+      <div class="admin-row">
+        <label for="admin-monteur">Монтажер</label>
+        <select id="admin-monteur">
+          <option value="">— не призначено —</option>
+        </select>
+      </div>
       <div class="admin-row">
         <label for="admin-cost">Вартість (грн)</label>
         <input id="admin-cost" type="number" min="0" step="0.01" placeholder="—">
