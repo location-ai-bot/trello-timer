@@ -3,25 +3,256 @@
 <head>
   <meta charset="utf-8">
   <link rel="stylesheet" href="https://p.trellocdn.com/power-up.min.css">
-  <link rel="stylesheet" href="./styles.css">
   <script src="https://p.trellocdn.com/power-up.min.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: #172b4d;
+      background: transparent;
+    }
+    #root {
+      padding: 12px 4px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      padding: 8px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      min-width: 120px;
+    }
+    .btn-primary { background: #0079bf; color: #fff; }
+    .btn-primary:hover { background: #026aa7; }
+    .btn-danger { background: #eb5a46; color: #fff; }
+    .btn-danger:hover { background: #cf513d; }
+    .elapsed {
+      font-size: 16px;
+      font-weight: 600;
+      color: #eb5a46;
+      font-variant-numeric: tabular-nums;
+    }
+    .total {
+      font-size: 14px;
+      color: #5e6c84;
+      font-variant-numeric: tabular-nums;
+    }
+    summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      color: #172b4d;
+      padding: 6px 0;
+      user-select: none;
+    }
+    summary:hover { color: #0079bf; }
+    ul#sessions {
+      list-style: none;
+      margin: 6px 0 0;
+      padding: 0;
+      font-size: 13px;
+    }
+    ul#sessions li {
+      padding: 6px 0;
+      border-bottom: 1px solid #ebecf0;
+    }
+    ul#sessions li:last-child { border-bottom: none; }
+    .muted { color: #5e6c84; font-weight: 400; }
+    .actions-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .btn-link {
+      background: transparent;
+      color: #5e6c84;
+      border: none;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+      text-decoration: underline;
+      min-width: auto;
+      font-weight: 400;
+    }
+    .btn-link:hover { color: #eb5a46; background: transparent; }
+  </style>
 </head>
 <body>
   <div id="root">
     <div class="row">
-      <button id="toggle" class="btn btn-primary">▶ Старт</button>
+      <button id="toggle" class="btn btn-primary">Старт</button>
       <span id="elapsed" class="elapsed"></span>
     </div>
     <div id="total" class="total">Загальний час: 0:00:00 · сесій: 0</div>
-    <details class="sessions-block" open>
+    <details open>
       <summary id="sessions-summary">Останні сесії (0)</summary>
       <ul id="sessions"></ul>
     </details>
     <div class="actions-row">
       <button id="clear" class="btn btn-link">Очистити журнал</button>
     </div>
-    <pre id="debug" class="debug"></pre>
   </div>
-  <script src="./section.js?v=2"></script>
+
+  <script>
+    var t = window.TrelloPowerUp.iframe();
+    var tickInterval = null;
+
+    function formatHMS(sec) {
+      if (!sec || sec < 0) sec = 0;
+      var h = Math.floor(sec / 3600);
+      var m = Math.floor((sec % 3600) / 60);
+      var s = Math.floor(sec % 60);
+      return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+    }
+
+    function escapeHtml(str) {
+      return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function formatDate(ms) {
+      try {
+        var d = new Date(ms);
+        return d.toLocaleString('uk-UA', {
+          day: '2-digit', month: '2-digit',
+          hour: '2-digit', minute: '2-digit'
+        });
+      } catch (e) { return ''; }
+    }
+
+    function normalizeSessions(raw) {
+      if (!raw) return [];
+      if (Array.isArray(raw)) return raw;
+      if (typeof raw === 'object') {
+        var out = [];
+        Object.keys(raw).forEach(function (k) {
+          if (raw[k] && typeof raw[k] === 'object') out.push(raw[k]);
+        });
+        return out;
+      }
+      return [];
+    }
+
+    function totalFromSessions(sessions) {
+      var list = normalizeSessions(sessions);
+      var total = 0;
+      for (var i = 0; i < list.length; i++) total += list[i].durationSec || 0;
+      return total;
+    }
+
+    function renderUI(active, sessionsRaw) {
+      var sessions = normalizeSessions(sessionsRaw);
+      var totalSec = totalFromSessions(sessions);
+
+      var btn = document.getElementById('toggle');
+      var elapsedEl = document.getElementById('elapsed');
+      var totalEl = document.getElementById('total');
+      var listEl = document.getElementById('sessions');
+      var summaryEl = document.getElementById('sessions-summary');
+
+      if (tickInterval) {
+        clearInterval(tickInterval);
+        tickInterval = null;
+      }
+
+      if (active && active.startedAt) {
+        btn.textContent = 'Стоп';
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-danger');
+        var tick = function () {
+          var sec = Math.floor((Date.now() - active.startedAt) / 1000);
+          elapsedEl.textContent = formatHMS(sec);
+        };
+        tick();
+        tickInterval = setInterval(tick, 1000);
+      } else {
+        btn.textContent = 'Старт';
+        btn.classList.add('btn-primary');
+        btn.classList.remove('btn-danger');
+        elapsedEl.textContent = '';
+      }
+
+      totalEl.textContent = 'Загальний час: ' + formatHMS(totalSec) + ' · сесій: ' + sessions.length;
+      summaryEl.textContent = 'Останні сесії (' + sessions.length + ')';
+
+      if (sessions.length === 0) {
+        listEl.innerHTML = '<li class="muted">Сесій ще не було</li>';
+      } else {
+        var recent = sessions.slice(-10).reverse();
+        listEl.innerHTML = recent.map(function (s) {
+          return '<li><b>' + escapeHtml(s.memberName || 'Невідомо') + '</b> &middot; ' +
+            formatHMS(s.durationSec) + ' <span class="muted">(' + formatDate(s.endedAt) + ')</span></li>';
+        }).join('');
+      }
+
+      try { t.sizeTo('#root'); } catch (e) {}
+    }
+
+    function render() {
+      return Promise.all([
+        t.get('card', 'private', 'activeTimer'),
+        t.get('card', 'shared', 'sessions')
+      ]).then(function (results) {
+        renderUI(results[0], results[1]);
+      });
+    }
+
+    document.getElementById('toggle').addEventListener('click', function () {
+      Promise.all([
+        t.get('card', 'private', 'activeTimer'),
+        t.member('id', 'fullName'),
+        t.get('card', 'shared', 'sessions')
+      ]).then(function (results) {
+        var active = results[0];
+        var member = results[1] || { id: 'unknown', fullName: 'Невідомо' };
+        var existing = normalizeSessions(results[2]);
+
+        if (active && active.startedAt) {
+          var durationSec = Math.floor((Date.now() - active.startedAt) / 1000);
+          if (durationSec < 5) {
+            return t.remove('card', 'private', 'activeTimer').then(render);
+          }
+          var newSession = {
+            memberId: member.id,
+            memberName: member.fullName,
+            startedAt: active.startedAt,
+            endedAt: Date.now(),
+            durationSec: durationSec
+          };
+          var nextSessions = existing.concat([newSession]);
+          return t.set('card', 'shared', 'sessions', nextSessions)
+            .then(function () { return t.remove('card', 'private', 'activeTimer'); })
+            .then(function () { renderUI(null, nextSessions); });
+        }
+
+        return t.set('card', 'private', 'activeTimer', { startedAt: Date.now() })
+          .then(function () { renderUI({ startedAt: Date.now() }, existing); });
+      });
+    });
+
+    document.getElementById('clear').addEventListener('click', function () {
+      if (!confirm('Очистити всі сесії на цій картці?')) return;
+      Promise.all([
+        t.remove('card', 'shared', 'sessions'),
+        t.remove('card', 'private', 'activeTimer')
+      ]).then(render);
+    });
+
+    t.render(function () { render(); });
+  </script>
 </body>
 </html>
