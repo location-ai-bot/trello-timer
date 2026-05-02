@@ -192,6 +192,71 @@
       font-family: inherit;
     }
 
+    .admin-divider {
+      height: 1px;
+      background: #dfe1e6;
+      margin: 4px 0 2px;
+    }
+    .admin-section-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #5e6c84;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 2px 0;
+    }
+    .admin-hint {
+      font-size: 11px;
+      color: #97a0af;
+      font-style: italic;
+      flex-shrink: 0;
+      min-width: 60px;
+    }
+
+    .complexity-bar {
+      display: flex;
+      gap: 4px;
+      flex: 1;
+    }
+    .complexity-btn {
+      flex: 1;
+      padding: 6px 0;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid #c1c7d0;
+      border-radius: 4px;
+      background: #fff;
+      color: #172b4d;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.1s;
+    }
+    .complexity-btn:hover {
+      background: #f4f5f7;
+    }
+    .complexity-btn.active {
+      background: #0079bf;
+      color: #fff;
+      border-color: #0079bf;
+    }
+    .complexity-btn[data-val="1"].active { background: #61bd4f; border-color: #61bd4f; }
+    .complexity-btn[data-val="2"].active { background: #a8c97a; border-color: #a8c97a; }
+    .complexity-btn[data-val="3"].active { background: #f2d600; border-color: #f2d600; color: #172b4d; }
+    .complexity-btn[data-val="4"].active { background: #ff9f1a; border-color: #ff9f1a; }
+    .complexity-btn[data-val="5"].active { background: #eb5a46; border-color: #eb5a46; }
+
+    .revisions-count {
+      flex: 1;
+      font-size: 14px;
+      font-weight: 600;
+      color: #172b4d;
+      padding: 6px 8px;
+      background: #fafbfc;
+      border: 1px solid #ebecf0;
+      border-radius: 4px;
+      text-align: center;
+    }
+
     .edit-info {
       padding: 8px 12px;
       border: 1px solid #dfe1e6;
@@ -283,8 +348,11 @@
 
     <div class="total" id="total">Загальний час по картці: —</div>
 
-    <!-- Admin-only: розгортальний блок з технічною інфою з останнього snapshot Premiere -->
-    <details id="edit-info" class="edit-info" hidden>
+    <!-- Admin-only: розгортальний блок з технічною інфою з останнього snapshot Premiere.
+         НЕ ставимо hidden за замовчуванням — JS ховає якщо не admin. Це дозволяє
+         легко перевірити що section.html ОНОВИВСЯ — якщо блок з'явився при завантаженні
+         картки, значить Trello підтягнув нову версію iframe. -->
+    <details id="edit-info" class="edit-info">
       <summary>🎬 Інформація про монтаж</summary>
       <div class="edit-info-grid">
         <div class="edit-info-row"><span>Курсор на таймлайні</span><b id="ei-playhead">—</b></div>
@@ -350,6 +418,38 @@
       <div class="admin-row">
         <label for="admin-cost">Вартість (грн)</label>
         <input id="admin-cost" type="number" min="0" step="0.01" placeholder="—">
+      </div>
+
+      <div class="admin-divider"></div>
+      <div class="admin-section-title">📋 Деталі проєкту</div>
+
+      <div class="admin-row">
+        <label for="admin-final-duration">Тривалість фінал. відео</label>
+        <input id="admin-final-duration" type="text" placeholder="15:30 або 90 (хв)" autocomplete="off">
+        <span class="admin-hint" id="admin-final-duration-hint">—</span>
+      </div>
+
+      <div class="admin-row">
+        <label>Складність</label>
+        <div id="admin-complexity" class="complexity-bar">
+          <button type="button" class="complexity-btn" data-val="1" title="1 — простий рілс">1</button>
+          <button type="button" class="complexity-btn" data-val="2" title="2 — стандартний">2</button>
+          <button type="button" class="complexity-btn" data-val="3" title="3 — середній (інтерв'ю)">3</button>
+          <button type="button" class="complexity-btn" data-val="4" title="4 — складний (графіка/color)">4</button>
+          <button type="button" class="complexity-btn" data-val="5" title="5 — найскладніший (motion/VFX)">5</button>
+        </div>
+      </div>
+
+      <div class="admin-row">
+        <label for="admin-due">Дедлайн</label>
+        <input id="admin-due" type="text" readonly placeholder="з Trello (Due date)">
+        <span class="admin-hint" id="admin-due-hint">синкається з Trello</span>
+      </div>
+
+      <div class="admin-row">
+        <label>Правки</label>
+        <span id="admin-revisions-count" class="revisions-count">0</span>
+        <button type="button" id="admin-revisions-inc" class="admin-mini-btn" title="Зафіксувати ще один раунд правок">+ Правка</button>
       </div>
 
       <div id="admin-saving" class="admin-saving"></div>

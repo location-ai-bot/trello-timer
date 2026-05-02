@@ -12,6 +12,7 @@ var t = window.TrelloPowerUp.iframe();
 var tickInterval = null;
 var refreshInterval = null;
 var currentCardId = null;
+var currentCardDue = null;
 var currentStatus = null;
 var currentMemberId = null;
 var isAdmin = false;
@@ -77,6 +78,45 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+// Парсер тривалості: '15:30' → 930, '90' → 5400 (90 хв), '1:30:00' → 5400, '' → null.
+// Повертає null якщо не вдалось розпарсити.
+function parseDurationToSec(s) {
+  if (s == null) return null;
+  s = String(s).trim();
+  if (!s) return null;
+  // h:mm:ss
+  var m3 = s.match(/^(\d+):([0-5]?\d):([0-5]?\d)$/);
+  if (m3) return parseInt(m3[1], 10) * 3600 + parseInt(m3[2], 10) * 60 + parseInt(m3[3], 10);
+  // mm:ss
+  var m2 = s.match(/^(\d+):([0-5]?\d)$/);
+  if (m2) return parseInt(m2[1], 10) * 60 + parseInt(m2[2], 10);
+  // просто число — трактуємо як хвилини
+  var n = parseFloat(s);
+  if (isFinite(n) && n >= 0) return Math.round(n * 60);
+  return null;
+}
+
+function formatSecToMMSS(sec) {
+  if (sec == null) return '';
+  sec = Number(sec) || 0;
+  var h = Math.floor(sec / 3600);
+  var m = Math.floor((sec % 3600) / 60);
+  var s = Math.floor(sec % 60);
+  if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  return m + ':' + String(s).padStart(2, '0');
+}
+
+function formatDueShort(iso) {
+  if (!iso) return '';
+  try {
+    var d = new Date(iso);
+    return d.toLocaleString('uk-UA', {
+      day: '2-digit', month: '2-digit', year: '2-digit',
+      hour: '2-digit', minute: '2-digit'
+    });
+  } catch (e) { return iso; }
+}
+
 // ────────── Supabase
 
 function sbHeaders() {
@@ -129,16 +169,44 @@ function fetchProjectMeta(adminId, cardId) {
     .catch(function () { return { cost: null, montage_type: null, client_id: null, client_name: null }; });
 }
 
-function saveProjectMeta(adminId, cardId, cost, type) {
+function saveProjectMeta(adminId, cardId, fields) {
+  // fields: { cost, type, finalDurationSec, complexity, dueAt }
   return fetch(SUPABASE_URL + '/rest/v1/rpc/update_project_meta', {
     method: 'POST',
     headers: sbHeaders(),
     body: JSON.stringify({
       p_admin_trello_member_id: adminId,
       p_trello_card_id: cardId,
-      p_cost: cost,
-      p_montage_type: type
+      p_cost:               fields.cost              !== undefined ? fields.cost              : null,
+      p_montage_type:       fields.type              !== undefined ? fields.type              : null,
+      p_final_duration_sec: fields.finalDurationSec  !== undefined ? fields.finalDurationSec  : null,
+      p_complexity:         fields.complexity        !== undefined ? fields.complexity        : null,
+      p_due_at:             fields.dueAt             !== undefined ? fields.dueAt             : null
     })
+  });
+}
+
+function syncCardDue(adminId, cardId, dueIso) {
+  return fetch(SUPABASE_URL + '/rest/v1/rpc/sync_card_due', {
+    method: 'POST', headers: sbHeaders(),
+    body: JSON.stringify({
+      p_admin_trello_member_id: adminId,
+      p_trello_card_id: cardId,
+      p_due_iso: dueIso || ''
+    })
+  });
+}
+
+function incrementRevisions(adminId, cardId) {
+  return fetch(SUPABASE_URL + '/rest/v1/rpc/increment_revisions', {
+    method: 'POST', headers: sbHeaders(),
+    body: JSON.stringify({
+      p_admin_trello_member_id: adminId,
+      p_trello_card_id: cardId
+    })
+  }).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json(); // повертає новий лічильник
   });
 }
 
@@ -519,9 +587,39 @@ function showAdminBlock(meta, monteurs, currentAssigned, clients) {
     monteurSel.appendChild(opt);
   });
 
-  // Початковий стан блокування monteur
-  updateAssignLock();
+  // ─── Нові поля Етап 2: тривалість, складність, дедлайн, правки ───
+  var finalDurEl = document.getElementById('admin-final-duration');
+  var finalDurHint = document.getElementById('admin-final-duration-hint');
+  if (meta && meta.final_duration_sec != null) {
+    finalDurEl.value = formatSecToMMSS(meta.final_duration_sec);
+    finalDurHint.textContent = '✓ ' + formatSecToMMSS(meta.final_duration_sec);
+  } else {
+    finalDurEl.value = '';
+    finalDurHint.textContent = 'не вказано';
+  }
 
+  // Complexity buttons
+  var complexity = meta && meta.complexity ? Number(meta.complexity) : null;
+  document.querySelectorAll('.complexity-btn').forEach(function (b) {
+    b.classList.toggle('active', complexity != null && Number(b.dataset.val) === complexity);
+  });
+
+  // Due date — readonly, показуємо в людському форматі
+  var dueEl = document.getElementById('admin-due');
+  var dueHint = document.getElementById('admin-due-hint');
+  if (meta && meta.due_at) {
+    dueEl.value = formatDueShort(meta.due_at);
+    dueHint.textContent = '';
+  } else {
+    dueEl.value = '';
+    dueHint.textContent = 'постав в Trello (Due date)';
+  }
+
+  // Revisions counter
+  var revEl = document.getElementById('admin-revisions-count');
+  revEl.textContent = (meta && meta.revisions_count != null) ? meta.revisions_count : '0';
+
+  updateAssignLock();
   try { t.sizeTo('#root'); } catch (e) {}
 }
 
@@ -566,11 +664,17 @@ function bindAdminInputs() {
     }
   }
 
-  function flushMeta() {
-    var cost = costEl.value === '' ? null : Number(costEl.value);
-    var type = typeEl.value || null;
+  function flushMeta(extra) {
+    extra = extra || {};
+    var fields = {
+      cost: costEl.value === '' ? null : Number(costEl.value),
+      type: typeEl.value || null
+    };
+    // Зливаємо додаткові поля що передали (final_duration, complexity тощо).
+    Object.keys(extra).forEach(function (k) { fields[k] = extra[k]; });
+
     showStatus('Зберігаю…');
-    saveProjectMeta(currentMemberId, currentCardId, cost, type)
+    saveProjectMeta(currentMemberId, currentCardId, fields)
       .then(function (r) {
         showStatus(r.ok ? 'Збережено ✓' : ('Помилка: HTTP ' + r.status), r.ok ? null : 'error');
       })
@@ -674,6 +778,56 @@ function bindAdminInputs() {
   costEl.addEventListener('blur', flushMeta);
   typeEl.addEventListener('change', function () { flushMeta(); updateAssignLock(); });
 
+  // ─── Тривалість фінального відео ───
+  var finalDurEl = document.getElementById('admin-final-duration');
+  var finalDurHint = document.getElementById('admin-final-duration-hint');
+  var finalDurDebounce = null;
+  function handleFinalDur() {
+    var sec = parseDurationToSec(finalDurEl.value);
+    if (finalDurEl.value && sec == null) {
+      finalDurHint.textContent = '⚠ формат не зрозумів';
+      finalDurHint.style.color = '#b04632';
+      return;
+    }
+    finalDurHint.style.color = '';
+    finalDurHint.textContent = sec != null ? '✓ ' + formatSecToMMSS(sec) : 'не вказано';
+    flushMeta({ finalDurationSec: sec });
+  }
+  finalDurEl.addEventListener('input', function () {
+    if (finalDurDebounce) clearTimeout(finalDurDebounce);
+    finalDurDebounce = setTimeout(handleFinalDur, 700);
+  });
+  finalDurEl.addEventListener('blur', handleFinalDur);
+
+  // ─── Складність 1..5 ───
+  document.querySelectorAll('.complexity-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var current = btn.classList.contains('active');
+      // Toggle: повторний клік знімає
+      document.querySelectorAll('.complexity-btn').forEach(function (b) {
+        b.classList.remove('active');
+      });
+      if (!current) btn.classList.add('active');
+      var val = current ? null : Number(btn.dataset.val);
+      flushMeta({ complexity: val });
+    });
+  });
+
+  // ─── Правки ───
+  var revIncBtn = document.getElementById('admin-revisions-inc');
+  var revEl = document.getElementById('admin-revisions-count');
+  revIncBtn.addEventListener('click', function () {
+    revIncBtn.disabled = true;
+    showStatus('Зараховую правку…');
+    incrementRevisions(currentMemberId, currentCardId)
+      .then(function (newCount) {
+        revEl.textContent = newCount;
+        showStatus('Правка #' + newCount + ' зарахована ✓');
+      })
+      .catch(function (err) { showStatus('Помилка: ' + (err.message || err), 'error'); })
+      .then(function () { revIncBtn.disabled = false; });
+  });
+
   // ─── Typeahead клієнта ───
   // input — користувач набирає текст. Після кожного символу:
   //   • перерахувати статус (matched / unmatched)
@@ -703,10 +857,11 @@ function bindAdminInputs() {
 
 t.render(function () {
   Promise.all([
-    t.card('id'),
+    t.card('id', 'due'),
     t.member('id')
   ]).then(function (results) {
     currentCardId = results[0].id;
+    currentCardDue = results[0].due || null; // ISO string або null
     currentMemberId = results[1].id;
 
     refresh();
@@ -719,14 +874,20 @@ t.render(function () {
     if (admin === true) {
       isAdmin = true;
       bindAdminInputs();
-      return Promise.all([
-        fetchProjectMeta(currentMemberId, currentCardId),
-        fetchMonteursList(currentMemberId),
-        fetchAssignedMonteur(currentCardId),
-        fetchClientsList()
-      ]).then(function (results) {
-        showAdminBlock(results[0], results[1], results[2], results[3]);
-      });
+      // Спочатку синхронізуємо due з Trello → потім тягнемо meta з оновленим due
+      return syncCardDue(currentMemberId, currentCardId, currentCardDue)
+        .catch(function () { /* fire-and-forget — не блокує UI якщо впало */ })
+        .then(function () {
+          return Promise.all([
+            fetchProjectMeta(currentMemberId, currentCardId),
+            fetchMonteursList(currentMemberId),
+            fetchAssignedMonteur(currentCardId),
+            fetchClientsList()
+          ]);
+        }).then(function (results) {
+          showAdminBlock(results[0], results[1], results[2], results[3]);
+          refresh();
+        });
     }
   });
 });
