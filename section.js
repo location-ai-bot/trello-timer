@@ -132,12 +132,12 @@ function renderStatus(s) {
     detail.innerHTML = 'Сесія триває <b id="elapsed-tick">' + formatHMS(elapsed) + '</b>';
     startTick(s.session_started_at);
   } else if (s.status === 'idle') {
-    head.innerHTML = '🟠 <span>Бездіє — <b>' + escapeHtml(name) + '</b></span>';
+    head.innerHTML = '🟡 <span>💤 Бездіє — <b>' + escapeHtml(name) + '</b></span>';
     detail.innerHTML = 'Сесія активна, але без змін у Premiere понад 3 хв · триває <b id="elapsed-tick">' +
       formatHMS(elapsed) + '</b>';
     startTick(s.session_started_at);
   } else if (s.status === 'break') {
-    head.innerHTML = '🟡 <span>На перерві — <b>' + escapeHtml(name) + '</b></span>';
+    head.innerHTML = '🟡 <span>☕ На перерві — <b>' + escapeHtml(name) + '</b></span>';
     detail.innerHTML = 'Сесія триває <b id="elapsed-tick">' + formatHMS(elapsed) + '</b>';
     startTick(s.session_started_at);
   } else {

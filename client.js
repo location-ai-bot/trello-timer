@@ -1,13 +1,10 @@
 /* eslint-disable no-undef */
 // LOCATION FLOW — Trello Power-Up
-// Читає стан кожної картки з Supabase і малює кольоровий бейдж:
-//   🟢 working — активна сесія, є зміни таймлайна за 3 хв
-//   🟠 idle    — активна сесія, але без активності в Premiere
-//   🟡 break   — активна сесія, монтажер на свідомій перерві
-//   🔴 no_work — сесії немає
-//
-// Сесії стартують/зупиняються виключно з Premiere плагіна (LOCATION FLOW).
-// Цей Power-Up — read-only, нічого не пише.
+// Read-only бейдж стану картки з Supabase.
+// 3 кольори:
+//   🟢 working — монтажер реально працює (зелений + ім'я + таймер)
+//   🟡 break / idle — пауза (жовтий + ім'я + ☕/💤 + таймер)
+//   🔴 no_work — нічого не відбувається (червоний)
 
 var SUPABASE_URL = 'https://xyoinglfguigfzrgaibg.supabase.co';
 var SUPABASE_KEY = 'sb_publishable_W1lF3V80JqrvqNWPMdkblg_BjUGPOin';
@@ -60,12 +57,20 @@ function fetchCardStatus(cardId) {
 
 // ────────── Побудова бейджів
 
-// Колір за статусом
-function colorOf(status) {
-  if (status === 'working') return 'green';
-  if (status === 'idle') return 'orange';
-  if (status === 'break') return 'yellow';
-  return 'red'; // no_work
+// Один лайв-таймер з кольоровою точкою
+function liveTimerBadge(prefix, name, secondaryEmoji, color, startedAtIso) {
+  var startedAt = new Date(startedAtIso).getTime();
+  return {
+    dynamic: function () {
+      var elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      var icon = secondaryEmoji ? secondaryEmoji + ' ' : '';
+      return {
+        text: prefix + ' ' + name + ' · ' + icon + formatHMS(elapsed),
+        color: color,
+        refresh: 1
+      };
+    }
+  };
 }
 
 // Бейдж на лицьовій частині картки (у списку колонки) — компактний
@@ -75,80 +80,54 @@ function buildSmallBadges(s) {
   var name = shortName(s.monteur_full_name);
 
   if (s.status === 'working') {
-    var startedAt = new Date(s.session_started_at).getTime();
-    return [{
-      dynamic: function () {
-        var elapsed = Math.floor((Date.now() - startedAt) / 1000);
-        return {
-          text: '▶ ' + name + ' · ' + formatHMS(elapsed),
-          color: 'green',
-          refresh: 30
-        };
-      }
-    }];
+    return [liveTimerBadge('🟢', name, null, 'green', s.session_started_at)];
   }
 
   if (s.status === 'idle') {
-    return [{ text: '💤 ' + name, color: 'orange', refresh: 30 }];
+    return [liveTimerBadge('🟡', name, '💤', 'yellow', s.session_started_at)];
   }
 
   if (s.status === 'break') {
-    return [{ text: '☕ ' + name, color: 'yellow', refresh: 30 }];
+    return [liveTimerBadge('🟡', name, '☕', 'yellow', s.session_started_at)];
   }
 
-  // no_work — маленька червона точка, без тексту, не засмічує борд
-  return [{ text: '·', color: 'red', refresh: 60 }];
+  // no_work — червоний бейдж "Вільна"
+  return [{ text: '🔴 Вільна', color: 'red' }];
 }
 
-// Бейджі у відкритій картці — детальніше
+// Бейджі у відкритій картці — детальніше + загальний час
 function buildDetailBadges(s) {
   if (!s) return [];
 
   var name = shortName(s.monteur_full_name);
   var totalText = '⏱ Загалом ' + formatHM(s.total_card_sec || 0);
+  var totalBadge = { title: 'Загальний час по картці', text: totalText, color: 'blue' };
 
   if (s.status === 'working') {
-    var startedAt = new Date(s.session_started_at).getTime();
-    return [
-      {
-        title: 'Активна сесія',
-        dynamic: function () {
-          var elapsed = Math.floor((Date.now() - startedAt) / 1000);
-          return {
-            title: 'Активна сесія',
-            text: '▶ ' + name + ' · ' + formatHMS(elapsed),
-            color: 'green',
-            refresh: 30
-          };
-        }
-      },
-      { title: 'Загальний час по картці', text: totalText, color: 'blue' }
-    ];
+    var b = liveTimerBadge('🟢', name, null, 'green', s.session_started_at);
+    b.title = 'Активна сесія';
+    return [b, totalBadge];
   }
 
   if (s.status === 'idle') {
-    return [
-      { title: 'Бездіє', text: '💤 ' + name + ' (без активності >3 хв)', color: 'orange', refresh: 30 },
-      { title: 'Загальний час по картці', text: totalText, color: 'blue' }
-    ];
+    var b2 = liveTimerBadge('🟡', name, '💤', 'yellow', s.session_started_at);
+    b2.title = 'Бездіє (без активності в Premiere >3 хв)';
+    return [b2, totalBadge];
   }
 
   if (s.status === 'break') {
-    return [
-      { title: 'Перерва', text: '☕ ' + name + ' на перерві', color: 'yellow', refresh: 30 },
-      { title: 'Загальний час по картці', text: totalText, color: 'blue' }
-    ];
+    var b3 = liveTimerBadge('🟡', name, '☕', 'yellow', s.session_started_at);
+    b3.title = 'На перерві';
+    return [b3, totalBadge];
   }
 
   // no_work
-  var badges = [{ title: 'Не в роботі', text: '🔴 Не в роботі', color: 'red' }];
-  if (s.total_card_sec > 0) {
-    badges.push({ title: 'Загальний час по картці', text: totalText, color: 'blue' });
-  }
+  var badges = [{ title: 'Картка не в роботі', text: '🔴 Вільна', color: 'red' }];
+  if (s.total_card_sec > 0) badges.push(totalBadge);
   return badges;
 }
 
-// ────────── Капабіліті Trello Power-Up
+// ────────── Capability'и Trello Power-Up
 
 window.TrelloPowerUp.initialize({
 
