@@ -191,6 +191,26 @@
       color: #172b4d;
       font-family: inherit;
     }
+
+    .admin-client-status {
+      font-size: 11px;
+      padding-left: 118px; /* щоб збігалось зі стартом input'а під label'ом */
+      color: #5e6c84;
+      line-height: 1.4;
+    }
+    .admin-client-status.found  { color: #166a3d; }
+    .admin-client-status.unknown { color: #b04632; }
+    .admin-client-status .hint { color: #97a0af; font-style: italic; }
+
+    /* Підсвічуємо input коли клієнт ще не вибраний */
+    #admin-client.unmatched {
+      border-color: #ffb84d;
+      background: #fff8e6;
+    }
+    #admin-client.matched {
+      border-color: #79b5e0;
+      background: #f0f7fc;
+    }
   </style>
 </head>
 <body>
@@ -224,11 +244,13 @@
 
       <div class="admin-row">
         <label for="admin-client">Клієнт</label>
-        <select id="admin-client">
-          <option value="">— обери —</option>
-        </select>
+        <input id="admin-client" type="text" list="admin-client-options"
+               placeholder="Почни писати… (напр. ожи)" autocomplete="off">
+        <datalist id="admin-client-options"></datalist>
+        <button id="admin-client-clear" class="admin-mini-btn" title="Очистити">×</button>
         <button id="admin-add-client" class="admin-mini-btn" title="Додати нового клієнта">+</button>
       </div>
+      <div id="admin-client-status" class="admin-client-status" hidden></div>
 
       <!-- Інлайн-форма додавання нового клієнта (схована за замовчуванням) -->
       <div id="admin-new-client" class="admin-new-client" hidden>

@@ -328,21 +328,83 @@ function refresh() {
 
 // ────────── Admin-блок: показ і логіка
 
-// Заповнює client dropdown списком, виділяє поточний клієнт картки.
+// Кеш клієнтів у пам'яті: дозволяє typeahead резолвити name → id
+// без додаткових запитів. Перезаповнюється при кожному populateClientsDropdown.
+var clientsCache = [];          // [{id, name, color}, ...]
+var clientsByLowerName = {};    // {'ожинове морозиво': {id, name, color}}
+
+// Заповнюємо <datalist> опціями і кешуємо лукапи.
 function populateClientsDropdown(clients, currentClientId) {
-  var clientSel = document.getElementById('admin-client');
-  while (clientSel.firstChild) clientSel.removeChild(clientSel.firstChild);
-  var empty = document.createElement('option');
-  empty.value = '';
-  empty.textContent = '— обери —';
-  clientSel.appendChild(empty);
-  (clients || []).forEach(function (c) {
-    var opt = document.createElement('option');
-    opt.value = c.id;
-    opt.textContent = c.name;
-    if (currentClientId && currentClientId === c.id) opt.selected = true;
-    clientSel.appendChild(opt);
+  clientsCache = clients || [];
+  clientsByLowerName = {};
+  clientsCache.forEach(function (c) {
+    clientsByLowerName[String(c.name).toLowerCase()] = c;
   });
+
+  var dl = document.getElementById('admin-client-options');
+  while (dl.firstChild) dl.removeChild(dl.firstChild);
+  clientsCache.forEach(function (c) {
+    var opt = document.createElement('option');
+    opt.value = c.name;          // datalist показує value, тож сюди name
+    dl.appendChild(opt);
+  });
+
+  // У input ставимо ім'я поточного клієнта картки (якщо є)
+  var input = document.getElementById('admin-client');
+  if (currentClientId) {
+    var match = clientsCache.find(function (c) { return c.id === currentClientId; });
+    input.value = match ? match.name : '';
+  } else {
+    input.value = '';
+  }
+  refreshClientStatus();
+}
+
+// Резолвимо те що ввели у input → клієнт чи нічого. Також малюємо
+// статус-рядок ("✓ Ожинове Морозиво" / "Не знайдено").
+function resolveClientByInput() {
+  var input = document.getElementById('admin-client');
+  var v = (input.value || '').trim().toLowerCase();
+  if (!v) return null;
+  return clientsByLowerName[v] || null;
+}
+
+function refreshClientStatus() {
+  var input = document.getElementById('admin-client');
+  var status = document.getElementById('admin-client-status');
+  var v = (input.value || '').trim();
+  if (!v) {
+    input.classList.remove('matched', 'unmatched');
+    status.hidden = true;
+    status.textContent = '';
+    return;
+  }
+  var found = resolveClientByInput();
+  if (found) {
+    input.classList.add('matched');
+    input.classList.remove('unmatched');
+    status.hidden = false;
+    status.className = 'admin-client-status found';
+    status.textContent = '✓ ' + found.name;
+  } else {
+    input.classList.add('unmatched');
+    input.classList.remove('matched');
+    status.hidden = false;
+    status.className = 'admin-client-status unknown';
+    // Якщо є кілька матчів за prefix — натякаємо
+    var prefix = v.toLowerCase();
+    var hits = clientsCache.filter(function (c) {
+      return c.name.toLowerCase().indexOf(prefix) !== -1;
+    });
+    if (hits.length === 1) {
+      status.innerHTML = '<span class="hint">збіг: ' + escapeHtml(hits[0].name) +
+        ' — натисни ↵ або обери зі списку</span>';
+    } else if (hits.length > 1) {
+      status.innerHTML = '<span class="hint">' + hits.length + ' варіантів — продовжуй писати</span>';
+    } else {
+      status.textContent = 'Клієнта "' + v + '" нема. Натисни + щоб додати.';
+    }
+  }
 }
 
 function showAdminBlock(meta, monteurs, currentAssigned, clients) {
@@ -383,12 +445,12 @@ function showAdminBlock(meta, monteurs, currentAssigned, clients) {
 // можливість зняти, але нову людину не дамо обрати без типу/клієнта.
 function updateAssignLock() {
   var typeEl = document.getElementById('admin-type');
-  var clientSel = document.getElementById('admin-client');
   var monteurSel = document.getElementById('admin-monteur');
   var warning = document.getElementById('admin-warning');
 
   var hasType = !!typeEl.value;
-  var hasClient = !!clientSel.value;
+  // Клієнт вважається обраним тільки коли input резолвиться в реальний клієнт.
+  var hasClient = !!resolveClientByInput();
   var ok = hasType && hasClient;
 
   monteurSel.disabled = !ok;
@@ -399,7 +461,8 @@ function updateAssignLock() {
 function bindAdminInputs() {
   var costEl = document.getElementById('admin-cost');
   var typeEl = document.getElementById('admin-type');
-  var clientSel = document.getElementById('admin-client');
+  var clientInput = document.getElementById('admin-client');
+  var clientClearBtn = document.getElementById('admin-client-clear');
   var monteurSel = document.getElementById('admin-monteur');
   var savingEl = document.getElementById('admin-saving');
   var addClientBtn = document.getElementById('admin-add-client');
@@ -407,6 +470,7 @@ function bindAdminInputs() {
   var newClientNameEl = document.getElementById('admin-new-client-name');
   var newClientSaveBtn = document.getElementById('admin-new-client-save');
   var newClientCancelBtn = document.getElementById('admin-new-client-cancel');
+  var lastSavedClientId = null;
 
   function showStatus(msg, kind) {
     savingEl.textContent = msg;
@@ -428,17 +492,38 @@ function bindAdminInputs() {
       .catch(function (err) { showStatus('Помилка: ' + (err.message || err), 'error'); });
   }
 
-  function flushClient() {
-    var clientId = clientSel.value || null;
-    if (!clientId) {
-      // Якщо знято — скидаємо в БД (передаємо null допустимо? Так, p_client_id uuid може бути null)
-      showStatus('Знімаю клієнта…');
-    } else {
-      showStatus('Зберігаю клієнта…');
+  // Зберігає поточно введеного клієнта в БД. Викликається коли користувач:
+  //   1) обрав з datalist
+  //   2) натиснув Enter
+  //   3) пішов з input (blur)
+  // Уникає повторного запиту коли значення не змінилось (lastSavedClientId).
+  function flushClient(force) {
+    var resolved = resolveClientByInput();
+    var clientId = resolved ? resolved.id : null;
+    var inputVal = (clientInput.value || '').trim();
+
+    // Якщо порожньо — знімаємо.
+    // Якщо введене значення не матчиться з жодним клієнтом — нічого не зберігаємо
+    // (warning user'у вже малюється в refreshClientStatus).
+    if (inputVal && !resolved) {
+      updateAssignLock();
+      return;
     }
+
+    if (!force && clientId === lastSavedClientId) {
+      updateAssignLock();
+      return;
+    }
+
+    showStatus(clientId ? 'Зберігаю клієнта…' : 'Знімаю клієнта…');
     assignClientToCard(currentMemberId, currentCardId, clientId)
       .then(function (r) {
-        showStatus(r.ok ? 'Збережено ✓' : ('Помилка: HTTP ' + r.status), r.ok ? null : 'error');
+        if (r.ok) {
+          lastSavedClientId = clientId;
+          showStatus(clientId ? 'Збережено ✓' : 'Знято ✓');
+        } else {
+          showStatus('Помилка: HTTP ' + r.status, 'error');
+        }
       })
       .catch(function (err) { showStatus('Помилка: ' + (err.message || err), 'error'); });
     updateAssignLock();
@@ -503,7 +588,31 @@ function bindAdminInputs() {
   costEl.addEventListener('input', debouncedFlushMeta);
   costEl.addEventListener('blur', flushMeta);
   typeEl.addEventListener('change', function () { flushMeta(); updateAssignLock(); });
-  clientSel.addEventListener('change', flushClient);
+
+  // ─── Typeahead клієнта ───
+  // input — користувач набирає текст. Після кожного символу:
+  //   • перерахувати статус (matched / unmatched)
+  //   • якщо value точно дорівнює одному клієнту → автозбереження
+  clientInput.addEventListener('input', function () {
+    refreshClientStatus();
+    var resolved = resolveClientByInput();
+    if (resolved) flushClient();
+  });
+  // Enter — підтвердити вибір (на випадок якщо didn't trigger 'input'-as-match)
+  clientInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); flushClient(true); }
+    else if (e.key === 'Escape') { clientClearBtn.click(); }
+  });
+  // Blur — спроба зберегти/попередити що нема такого клієнта
+  clientInput.addEventListener('blur', function () { flushClient(); });
+
+  clientClearBtn.addEventListener('click', function () {
+    clientInput.value = '';
+    refreshClientStatus();
+    flushClient(true);
+    clientInput.focus();
+  });
+
   monteurSel.addEventListener('change', flushAssignment);
 }
 
