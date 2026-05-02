@@ -13,6 +13,9 @@ var tickInterval = null;
 var refreshInterval = null;
 var currentCardId = null;
 var currentStatus = null;
+var currentMemberId = null;
+var isAdmin = false;
+var savingDebounce = null;
 
 // ────────── Утиліти
 
@@ -73,6 +76,43 @@ function fetchCardStatus(cardId) {
     .then(function (rows) {
       return (rows && rows.length) ? rows[0] : null;
     });
+}
+
+function fetchIsAdmin(memberId) {
+  return fetch(SUPABASE_URL + '/rest/v1/rpc/is_admin_member', {
+    method: 'POST',
+    headers: sbHeaders(),
+    body: JSON.stringify({ p_trello_member_id: memberId })
+  })
+    .then(function (r) { return r.ok ? r.json() : false; })
+    .catch(function () { return false; });
+}
+
+function fetchProjectMeta(adminId, cardId) {
+  return fetch(SUPABASE_URL + '/rest/v1/rpc/get_project_meta', {
+    method: 'POST',
+    headers: sbHeaders(),
+    body: JSON.stringify({
+      p_admin_trello_member_id: adminId,
+      p_trello_card_id: cardId
+    })
+  })
+    .then(function (r) { return r.ok ? r.json() : []; })
+    .then(function (rows) { return (rows && rows.length) ? rows[0] : { cost: null, montage_type: null }; })
+    .catch(function () { return { cost: null, montage_type: null }; });
+}
+
+function saveProjectMeta(adminId, cardId, cost, type) {
+  return fetch(SUPABASE_URL + '/rest/v1/rpc/update_project_meta', {
+    method: 'POST',
+    headers: sbHeaders(),
+    body: JSON.stringify({
+      p_admin_trello_member_id: adminId,
+      p_trello_card_id: cardId,
+      p_cost: cost,
+      p_montage_type: type
+    })
+  });
 }
 
 // Список останніх сесій: треба знайти project_id за trello_card_id, потім
@@ -211,11 +251,66 @@ function refresh() {
   });
 }
 
+// ────────── Admin-блок: показ і логіка
+
+function showAdminBlock(meta) {
+  var block = document.getElementById('admin-block');
+  var costEl = document.getElementById('admin-cost');
+  var typeEl = document.getElementById('admin-type');
+  block.classList.add('visible');
+  if (meta && meta.cost != null) costEl.value = meta.cost;
+  if (meta && meta.montage_type) typeEl.value = meta.montage_type;
+  try { t.sizeTo('#root'); } catch (e) {}
+}
+
+function bindAdminInputs() {
+  var costEl = document.getElementById('admin-cost');
+  var typeEl = document.getElementById('admin-type');
+  var savingEl = document.getElementById('admin-saving');
+
+  function flush() {
+    var cost = costEl.value === '' ? null : Number(costEl.value);
+    var type = typeEl.value || null;
+    savingEl.textContent = 'Зберігаю…';
+    saveProjectMeta(currentMemberId, currentCardId, cost, type)
+      .then(function (r) {
+        savingEl.textContent = r.ok ? 'Збережено ✓' : ('Помилка: HTTP ' + r.status);
+        setTimeout(function () { savingEl.textContent = ''; }, 2000);
+      })
+      .catch(function (err) {
+        savingEl.textContent = 'Помилка: ' + (err.message || err);
+      });
+  }
+
+  function debouncedFlush() {
+    if (savingDebounce) clearTimeout(savingDebounce);
+    savingDebounce = setTimeout(flush, 700);
+  }
+
+  costEl.addEventListener('input', debouncedFlush);
+  costEl.addEventListener('blur', flush);
+  typeEl.addEventListener('change', flush);
+}
+
 t.render(function () {
-  t.card('id').then(function (card) {
-    currentCardId = card.id;
+  Promise.all([
+    t.card('id'),
+    t.member('id')
+  ]).then(function (results) {
+    currentCardId = results[0].id;
+    currentMemberId = results[1].id;
+
     refresh();
     if (refreshInterval) clearInterval(refreshInterval);
     refreshInterval = setInterval(refresh, REFRESH_INTERVAL_MS);
+
+    // Перевірка прав адміна — раз на завантаження
+    return fetchIsAdmin(currentMemberId);
+  }).then(function (admin) {
+    if (admin === true) {
+      isAdmin = true;
+      bindAdminInputs();
+      return fetchProjectMeta(currentMemberId, currentCardId).then(showAdminBlock);
+    }
   });
 });
