@@ -1,9 +1,20 @@
 /* eslint-disable no-undef */
-// UI-логіка секції "Тайм-трекер" (рендериться як iframe всередині картки)
-// v2: immutable update + debug-блок
+// LOCATION FLOW — секція картки в Trello
+// Read-only: показує поточний стан картки і список останніх сесій,
+// тягнучи їх з Supabase. Сесії створюються/закриваються виключно з
+// Premiere плагіна.
+
+var SUPABASE_URL = 'https://xyoinglfguigfzrgaibg.supabase.co';
+var SUPABASE_KEY = 'sb_publishable_W1lF3V80JqrvqNWPMdkblg_BjUGPOin';
+var REFRESH_INTERVAL_MS = 15 * 1000; // оновлюємо стан кожні 15 секунд
 
 var t = window.TrelloPowerUp.iframe();
 var tickInterval = null;
+var refreshInterval = null;
+var currentCardId = null;
+var currentStatus = null;
+
+// ────────── Утиліти
 
 function formatHMS(sec) {
   if (!sec || sec < 0) sec = 0;
@@ -11,6 +22,24 @@ function formatHMS(sec) {
   var m = Math.floor((sec % 3600) / 60);
   var s = Math.floor(sec % 60);
   return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+function formatHM(sec) {
+  if (!sec || sec < 0) sec = 0;
+  var h = Math.floor(sec / 3600);
+  var m = Math.floor((sec % 3600) / 60);
+  return h + 'г ' + String(m).padStart(2, '0') + 'хв';
+}
+
+function formatDate(iso) {
+  if (!iso) return '';
+  try {
+    var d = new Date(iso);
+    return d.toLocaleString('uk-UA', {
+      day: '2-digit', month: '2-digit',
+      hour: '2-digit', minute: '2-digit'
+    });
+  } catch (e) { return ''; }
 }
 
 function escapeHtml(str) {
@@ -21,179 +50,172 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-function formatDate(ms) {
-  try {
-    var d = new Date(ms);
-    return d.toLocaleString('uk-UA', {
-      day: '2-digit',
-      month: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
+// ────────── Supabase
+
+function sbHeaders() {
+  return {
+    'apikey': SUPABASE_KEY,
+    'Authorization': 'Bearer ' + SUPABASE_KEY,
+    'Content-Type': 'application/json'
+  };
+}
+
+function fetchCardStatus(cardId) {
+  return fetch(SUPABASE_URL + '/rest/v1/rpc/get_card_status', {
+    method: 'POST',
+    headers: sbHeaders(),
+    body: JSON.stringify({ p_trello_card_id: cardId })
+  })
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function (rows) {
+      return (rows && rows.length) ? rows[0] : null;
     });
-  } catch (e) {
-    return '';
+}
+
+// Список останніх сесій: треба знайти project_id за trello_card_id, потім
+// взяти 10 останніх завершених. Робимо двома запитами через REST.
+function fetchRecentSessions(cardId) {
+  var url = SUPABASE_URL + '/rest/v1/projects?trello_card_id=eq.' +
+    encodeURIComponent(cardId) + '&select=id&limit=1';
+  return fetch(url, { headers: sbHeaders() })
+    .then(function (r) {
+      if (!r.ok) throw new Error('projects: HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function (rows) {
+      if (!rows || !rows.length) return [];
+      var pid = rows[0].id;
+      var url2 = SUPABASE_URL + '/rest/v1/sessions?project_id=eq.' +
+        encodeURIComponent(pid) +
+        '&ended_at=not.is.null' +
+        '&select=id,monteur_id,started_at,ended_at,total_active_sec,monteurs(full_name,nickname)' +
+        '&order=ended_at.desc&limit=10';
+      return fetch(url2, { headers: sbHeaders() })
+        .then(function (r2) {
+          if (!r2.ok) throw new Error('sessions: HTTP ' + r2.status);
+          return r2.json();
+        });
+    })
+    .catch(function () { return []; });
+}
+
+// ────────── Рендер
+
+function renderStatus(s) {
+  currentStatus = s;
+  var card = document.getElementById('status');
+  var head = document.getElementById('status-headline');
+  var detail = document.getElementById('status-detail');
+  var total = document.getElementById('total');
+
+  // прибираємо всі класи стану
+  card.classList.remove('working', 'idle', 'break', 'no_work');
+
+  if (!s) {
+    card.classList.add('no_work');
+    head.textContent = '— Завантаження статусу —';
+    detail.textContent = '';
+    total.textContent = 'Загальний час по картці: —';
+    return;
   }
-}
 
-function normalizeSessions(raw) {
-  // Захист від невідомого формату storage (масив, обʼєкт-як-масив, null)
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  if (typeof raw === 'object') {
-    // Trello іноді повертає arrays as object with numeric keys
-    var out = [];
-    Object.keys(raw).forEach(function (k) {
-      if (raw[k] && typeof raw[k] === 'object') out.push(raw[k]);
-    });
-    return out;
+  card.classList.add(s.status);
+
+  var name = s.monteur_full_name || '';
+  var elapsed = s.elapsed_active_sec || 0;
+
+  if (s.status === 'working') {
+    head.innerHTML = '🟢 <span>Працює — <b>' + escapeHtml(name) + '</b></span>';
+    detail.innerHTML = 'Сесія триває <b id="elapsed-tick">' + formatHMS(elapsed) + '</b>';
+    startTick(s.session_started_at);
+  } else if (s.status === 'idle') {
+    head.innerHTML = '🟠 <span>Бездіє — <b>' + escapeHtml(name) + '</b></span>';
+    detail.innerHTML = 'Сесія активна, але без змін у Premiere понад 3 хв · триває <b id="elapsed-tick">' +
+      formatHMS(elapsed) + '</b>';
+    startTick(s.session_started_at);
+  } else if (s.status === 'break') {
+    head.innerHTML = '🟡 <span>На перерві — <b>' + escapeHtml(name) + '</b></span>';
+    detail.innerHTML = 'Сесія триває <b id="elapsed-tick">' + formatHMS(elapsed) + '</b>';
+    startTick(s.session_started_at);
+  } else {
+    head.innerHTML = '🔴 <span>Не в роботі</span>';
+    if (s.last_session_ended_at) {
+      detail.textContent = 'Остання сесія завершена ' + formatDate(s.last_session_ended_at);
+    } else {
+      detail.textContent = 'Жодної сесії ще не було';
+    }
+    stopTick();
   }
-  return [];
+
+  total.textContent = 'Загальний час по картці: ' + formatHM(s.total_card_sec || 0);
+  try { t.sizeTo('#root'); } catch (e) {}
 }
 
-function totalFromSessions(sessions) {
-  var list = normalizeSessions(sessions);
-  var total = 0;
-  for (var i = 0; i < list.length; i++) total += list[i].durationSec || 0;
-  return total;
+function startTick(startedAtIso) {
+  stopTick();
+  if (!startedAtIso) return;
+  var startedAtMs = new Date(startedAtIso).getTime();
+  tickInterval = setInterval(function () {
+    var el = document.getElementById('elapsed-tick');
+    if (!el) return;
+    var sec = Math.floor((Date.now() - startedAtMs) / 1000);
+    el.textContent = formatHMS(sec);
+  }, 1000);
 }
 
-function renderUI(active, sessionsRaw) {
-  var sessions = normalizeSessions(sessionsRaw);
-  var totalSec = totalFromSessions(sessions);
-
-  var btn = document.getElementById('toggle');
-  var elapsedEl = document.getElementById('elapsed');
-  var totalEl = document.getElementById('total');
-  var listEl = document.getElementById('sessions');
-  var summaryEl = document.getElementById('sessions-summary');
-  var debugEl = document.getElementById('debug');
-
+function stopTick() {
   if (tickInterval) {
     clearInterval(tickInterval);
     tickInterval = null;
   }
-
-  if (active && active.startedAt) {
-    btn.textContent = '⏸ Стоп';
-    btn.classList.remove('btn-primary');
-    btn.classList.add('btn-danger');
-
-    var tick = function () {
-      var sec = Math.floor((Date.now() - active.startedAt) / 1000);
-      elapsedEl.textContent = '▶ ' + formatHMS(sec);
-    };
-    tick();
-    tickInterval = setInterval(tick, 1000);
-  } else {
-    btn.textContent = '▶ Старт';
-    btn.classList.add('btn-primary');
-    btn.classList.remove('btn-danger');
-    elapsedEl.textContent = '';
-  }
-
-  totalEl.textContent = 'Загальний час: ' + formatHMS(totalSec) + ' · сесій: ' + sessions.length;
-
-  if (summaryEl) {
-    summaryEl.textContent = 'Останні сесії (' + sessions.length + ')';
-  }
-
-  if (sessions.length === 0) {
-    listEl.innerHTML = '<li class="muted">Сесій ще не було</li>';
-  } else {
-    var recent = sessions.slice(-10).reverse();
-    listEl.innerHTML = recent
-      .map(function (s) {
-        return (
-          '<li><b>' +
-          escapeHtml(s.memberName || 'Невідомо') +
-          '</b> · ' +
-          formatHMS(s.durationSec) +
-          ' <span class="muted">(' +
-          formatDate(s.endedAt) +
-          ')</span></li>'
-        );
-      })
-      .join('');
-  }
-
-  if (debugEl) {
-    debugEl.textContent =
-      'DEBUG · Raw sessions у storage:\n' +
-      JSON.stringify(sessionsRaw, null, 2);
-  }
-
-  t.sizeTo('#root');
 }
 
-function render() {
+function renderSessions(sessions) {
+  var list = document.getElementById('sessions');
+  var summary = document.getElementById('sessions-summary');
+  summary.textContent = 'Останні сесії (' + sessions.length + ')';
+
+  if (!sessions.length) {
+    list.innerHTML = '<li class="muted">Сесій ще не було</li>';
+    return;
+  }
+
+  list.innerHTML = sessions.map(function (s) {
+    var who = s.monteurs && s.monteurs.full_name ? s.monteurs.full_name : 'Невідомо';
+    return '<li><b>' + escapeHtml(who) + '</b> · ' +
+      formatHMS(s.total_active_sec || 0) +
+      ' <span class="muted">(' + formatDate(s.ended_at) + ')</span></li>';
+  }).join('');
+
+  try { t.sizeTo('#root'); } catch (e) {}
+}
+
+// ────────── Основний цикл
+
+function refresh() {
+  if (!currentCardId) return Promise.resolve();
   return Promise.all([
-    t.get('card', 'private', 'activeTimer'),
-    t.get('card', 'shared', 'sessions'),
+    fetchCardStatus(currentCardId),
+    fetchRecentSessions(currentCardId)
   ]).then(function (results) {
-    renderUI(results[0], results[1]);
-  });
-}
-
-document.getElementById('toggle').addEventListener('click', function () {
-  Promise.all([
-    t.get('card', 'private', 'activeTimer'),
-    t.member('id', 'fullName'),
-    t.get('card', 'shared', 'sessions'),
-  ]).then(function (results) {
-    var active = results[0];
-    var member = results[1];
-    var existing = normalizeSessions(results[2]);
-
-    if (active && active.startedAt) {
-      var durationSec = Math.floor((Date.now() - active.startedAt) / 1000);
-
-      // Захист: < 5 секунд — скидаємо без запису
-      if (durationSec < 5) {
-        return t.remove('card', 'private', 'activeTimer').then(render);
-      }
-
-      var newSession = {
-        memberId: member.id,
-        memberName: member.fullName,
-        startedAt: active.startedAt,
-        endedAt: Date.now(),
-        durationSec: durationSec,
-      };
-
-      // КЛЮЧОВО: створюємо новий масив, не мутуємо старий
-      var nextSessions = existing.concat([newSession]);
-
-      return t
-        .set('card', 'shared', 'sessions', nextSessions)
-        .then(function () {
-          return t.remove('card', 'private', 'activeTimer');
-        })
-        .then(function () {
-          // Рендеримо одразу з новими даними, не чекаючи на t.get
-          renderUI(null, nextSessions);
-        });
-    }
-
-    return t
-      .set('card', 'private', 'activeTimer', { startedAt: Date.now() })
-      .then(function () {
-        renderUI({ startedAt: Date.now() }, existing);
-      });
-  });
-});
-
-// Кнопка "Очистити журнал" для тестів
-var clearBtn = document.getElementById('clear');
-if (clearBtn) {
-  clearBtn.addEventListener('click', function () {
-    if (!confirm('Очистити всі сесії на цій картці?')) return;
-    Promise.all([
-      t.remove('card', 'shared', 'sessions'),
-      t.remove('card', 'private', 'activeTimer'),
-    ]).then(render);
+    renderStatus(results[0]);
+    renderSessions(results[1] || []);
+  }).catch(function (err) {
+    var head = document.getElementById('status-headline');
+    var detail = document.getElementById('status-detail');
+    head.textContent = '⚠️ Помилка';
+    detail.textContent = err.message || String(err);
   });
 }
 
 t.render(function () {
-  render();
+  t.card('id').then(function (card) {
+    currentCardId = card.id;
+    refresh();
+    if (refreshInterval) clearInterval(refreshInterval);
+    refreshInterval = setInterval(refresh, REFRESH_INTERVAL_MS);
+  });
 });
