@@ -167,26 +167,30 @@ function renderStatus(s) {
   var name = s.monteur_full_name || '';
   var elapsed = s.elapsed_active_sec || 0;
 
+  var stagePart = s.current_status
+    ? ' · <span style="color:#0079bf">📋 ' + escapeHtml(s.current_status) + '</span>'
+    : '';
+
   if (s.status === 'working') {
     head.innerHTML = '🟢 <span>Працює — <b>' + escapeHtml(name) + '</b></span>';
-    detail.innerHTML = 'Сесія триває <b id="elapsed-tick">' + formatHMS(elapsed) + '</b>';
+    detail.innerHTML = 'Сесія триває <b id="elapsed-tick">' + formatHMS(elapsed) + '</b>' + stagePart;
     startTick(s.session_started_at);
   } else if (s.status === 'idle') {
     head.innerHTML = '🟡 <span>💤 Бездіє — <b>' + escapeHtml(name) + '</b></span>';
     detail.innerHTML = 'Сесія активна, але без змін у Premiere понад 3 хв · триває <b id="elapsed-tick">' +
-      formatHMS(elapsed) + '</b>';
+      formatHMS(elapsed) + '</b>' + stagePart;
     startTick(s.session_started_at);
   } else if (s.status === 'break') {
     head.innerHTML = '🟡 <span>☕ На перерві — <b>' + escapeHtml(name) + '</b></span>';
-    detail.innerHTML = 'Сесія триває <b id="elapsed-tick">' + formatHMS(elapsed) + '</b>';
+    detail.innerHTML = 'Сесія триває <b id="elapsed-tick">' + formatHMS(elapsed) + '</b>' + stagePart;
     startTick(s.session_started_at);
   } else {
     head.innerHTML = '🔴 <span>Не в роботі</span>';
-    if (s.last_session_ended_at) {
-      detail.textContent = 'Остання сесія завершена ' + formatDate(s.last_session_ended_at);
-    } else {
-      detail.textContent = 'Жодної сесії ще не було';
-    }
+    var parts = [];
+    if (s.last_session_ended_at) parts.push('Остання сесія завершена ' + formatDate(s.last_session_ended_at));
+    else parts.push('Жодної сесії ще не було');
+    if (s.current_status) parts.push('Етап: <b>' + escapeHtml(s.current_status) + '</b>');
+    detail.innerHTML = parts.join(' · ');
     stopTick();
   }
 
