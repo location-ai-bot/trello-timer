@@ -131,13 +131,16 @@ function fetchCardStatus(cardId) {
     });
 }
 
+// Admin = будь-який член Trello-дошки на якій встановлений Power-Up.
+// Логіка: якщо Trello відкрив тобі цю картку — у тебе є доступ до борду —
+// значить ти довірена особа і отримуєш admin-меню (тип, клієнт, монтажер тощо).
+// Не залежить від запису в БД monteurs.trello_member_id — нема ручної прив'язки.
 function fetchIsAdmin(memberId) {
-  return fetch(SUPABASE_URL + '/rest/v1/rpc/is_admin_member', {
-    method: 'POST',
-    headers: sbHeaders(),
-    body: JSON.stringify({ p_trello_member_id: memberId })
-  })
-    .then(function (r) { return r.ok ? r.json() : false; })
+  return t.board('members')
+    .then(function (board) {
+      var members = (board && board.members) || [];
+      return members.some(function (m) { return m.id === memberId; });
+    })
     .catch(function () { return false; });
 }
 
@@ -800,5 +803,3 @@ t.render(function () {
     }
   });
 });
-
-
