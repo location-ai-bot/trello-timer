@@ -87,7 +87,7 @@ function liveTimerBadge(prefix, name, secondaryEmoji, color, startedAtIso, curre
 // 🟢 Oleh R. · 1г 23хв        (working)
 // 🟡 Oleh R. 💤 · 1г 23хв      (idle)
 // 🟡 Oleh R. ☕ · 1г 23хв      (break)
-// 🔴 Вільна                    (no work — компактно, не засмічує)
+// 🔴 Не в роботі                    (no work — компактно, не засмічує)
 function buildSmallBadges(s) {
   if (!s) return [];
 
@@ -108,7 +108,7 @@ function buildSmallBadges(s) {
 
   // no_work — короткий червоний + опційно етап якщо хтось встановив
   if (stage) return [{ text: '🔴 ' + stage, color: 'red' }];
-  return [{ text: '🔴 Вільна', color: 'red' }];
+  return [{ text: '🔴 Не в роботі', color: 'red' }];
 }
 
 // Бейджі у відкритій картці — детальніше + загальний час
@@ -146,7 +146,7 @@ function buildDetailBadges(s) {
   }
 
   // no_work
-  var badges = [{ title: 'Картка не в роботі', text: '🔴 Вільна', color: 'red' }];
+  var badges = [{ title: 'Картка не в роботі', text: '🔴 Не в роботі', color: 'red' }];
   if (stageBadge) badges.push(stageBadge);
   if (s.total_card_sec > 0) badges.push(totalBadge);
   return badges;
