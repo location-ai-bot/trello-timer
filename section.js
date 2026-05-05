@@ -134,14 +134,44 @@ function fetchCardStatus(cardId) {
 // Admin = будь-який член Trello-дошки на якій встановлений Power-Up.
 // Логіка: якщо Trello відкрив тобі цю картку — у тебе є доступ до борду —
 // значить ти довірена особа і отримуєш admin-меню (тип, клієнт, монтажер тощо).
-// Не залежить від запису в БД monteurs.trello_member_id — нема ручної прив'язки.
+//
+// Frontend перевіряє через t.board('members'), а заодно синкає список членів
+// у БД (trello_admin_whitelist) — щоб SQL RPCs теж визнавали admin без ручної
+// прив'язки monteurs.trello_member_id.
 function fetchIsAdmin(memberId) {
   return t.board('members')
     .then(function (board) {
       var members = (board && board.members) || [];
-      return members.some(function (m) { return m.id === memberId; });
+      var isMember = members.some(function (m) { return m.id === memberId; });
+
+      // Sync whitelist у БД — fire-and-forget, не блокує UI.
+      if (isMember && members.length > 0) {
+        syncAdminWhitelist(memberId, members).catch(function (err) {
+          console.warn('[LOCATION FLOW] sync whitelist failed:', err.message || err);
+        });
+      }
+
+      return isMember;
     })
     .catch(function () { return false; });
+}
+
+function syncAdminWhitelist(callerId, members) {
+  // Передаємо лише потрібні поля з member object — Trello SDK може віддавати багато
+  var slim = members.map(function (m) {
+    return { id: m.id, fullName: m.fullName || '', username: m.username || '' };
+  });
+  return fetch(SUPABASE_URL + '/rest/v1/rpc/sync_trello_admin_whitelist', {
+    method: 'POST',
+    headers: sbHeaders(),
+    body: JSON.stringify({
+      p_caller_trello_member_id: callerId,
+      p_members: slim
+    })
+  }).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  });
 }
 
 function fetchProjectMeta(adminId, cardId) {
